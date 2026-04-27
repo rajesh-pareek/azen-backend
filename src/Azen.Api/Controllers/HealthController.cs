@@ -1,3 +1,4 @@
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 namespace Azen.Api.Controllers;
 
@@ -12,6 +13,7 @@ public class HealthController : ControllerBase
     {
         _config = config;
     }
+    [Authorize]
     [HttpGet]
     public IActionResult Get()
     {

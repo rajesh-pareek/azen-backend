@@ -59,6 +59,7 @@ wwwroot/
 .env.*
 appsettings.Local.json
 appsettings.*.local.json
+appsettings.Development.json
 
 ############################################
 # 🔧 Rider / JetBrains (optional)
