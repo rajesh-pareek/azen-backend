@@ -1,5 +1,6 @@
 using System.Security.Cryptography;
 using System.Text;
+using Azen.Application.DTOs;
 using Azen.Application.DTOs.Auth;
 using Azen.Application.Interfaces;
 using Azen.Domain.Entities.Auth;
@@ -57,6 +58,31 @@ public class AuthController : ControllerBase
         });
     }
 
+    private async Task<object> GenerateTokenPair(User user, Guid orgId, Guid memberId, string role, string subRole)
+    {
+        var accessToken = jwtService.GenerateAccessToken(user.Id, orgId, memberId, role, subRole);
+        var refreshToken = jwtService.GenerateRefreshToken();
+
+        var refreshTokenHash = Convert.ToBase64String(SHA256.HashData(Encoding.UTF8.GetBytes(refreshToken)));
+
+        var refreshTokenEntity = new RefreshToken
+        {
+            UserId = user.Id,
+            OrgId = orgId,
+            TokenHash = refreshTokenHash,
+            ExpiresAt = DateTime.UtcNow.AddDays(int.Parse(config["Jwt:RefreshTokenExpiryDays"]!))
+        };
+
+        authDb.RefreshTokens.Add(refreshTokenEntity);
+        await authDb.SaveChangesAsync();
+        return new
+        {
+            access_token = accessToken,
+            refresh_token = refreshToken,
+            expires_in = 900,
+        };
+    }
+
     [HttpPost("token/issue")]
     public async Task<IActionResult> IssueToken([FromBody] TokenRequest request)
     {
@@ -72,15 +98,15 @@ public class AuthController : ControllerBase
 
         // Generate Access Tokens
         //To Do: Replace Dummy Values With Real Org Lookup once AppDb is setup
-        var accessToken = jwtService.GenerateAccessToken(
+        /* var accessToken = jwtService.GenerateAccessToken(
             userId: user.Id,
             orgId: request.OrgId,
             memberId: Guid.Empty, //placeholder until appdb
             role: "transporter",
             subRole: "member"
-        );
+        ); */
 
-        var refreshToken = jwtService.GenerateRefreshToken();
+        /* var refreshToken = jwtService.GenerateRefreshToken();
         //Hash and store refresh token
         var refreshTokenHash = Convert.ToBase64String(SHA256.HashData(Encoding.UTF8.GetBytes(refreshToken)));
 
@@ -90,18 +116,43 @@ public class AuthController : ControllerBase
             OrgId = request.OrgId,
             TokenHash = refreshTokenHash,
             ExpiresAt = DateTime.UtcNow.AddDays(int.Parse(config["Jwt:RefreshTokenExpiryDays"]!)),
-        };
+        }; */
 
-        authDb.RefreshTokens.Add(refreshTokenEntity);
+        /*  authDb.RefreshTokens.Add(refreshTokenEntity);
+         await authDb.SaveChangesAsync(); */
+        var tokens = await GenerateTokenPair(user, request.OrgId, Guid.Empty, "trasporter", "member");
+        return Ok(tokens);
+    }
+
+    [HttpPost("token/refresh")]
+    public async Task<IActionResult> RefreshToken([FromBody] RefreshTokenRequest refreshTokenRequest)
+    {
+        var refreshTokenHash = Convert.ToBase64String(SHA256.HashData(Encoding.UTF8.GetBytes(refreshTokenRequest.RefreshToken)));
+
+        var existingToken = await authDb.RefreshTokens.FirstOrDefaultAsync(r => r.TokenHash == refreshTokenHash && r.RevokedAt == null && r.ExpiresAt > DateTime.UtcNow);
+        if (existingToken == null) return Unauthorized(new { error = "INVALID_REFRESH_TOKEN" });
+        existingToken.RevokedAt = DateTime.UtcNow;
+
+        var user = await authDb.Users.FindAsync(existingToken.UserId);
+        if (user == null) return NotFound(new { error = "USER_NOT_FOUND" });
+
+        var tokens = await GenerateTokenPair(user, existingToken.OrgId, Guid.Empty, "transporter", "member");
+
+        return Ok(tokens);
+    }
+
+    [HttpPost("logout")]
+    public async Task<IActionResult> Logout([FromBody] RefreshTokenRequest request)
+    {
+        var tokenHash = Convert.ToBase64String(SHA256.HashData(Encoding.UTF8.GetBytes(request.RefreshToken)));
+        var existingToken = await authDb.RefreshTokens.FirstOrDefaultAsync(r => r.TokenHash == tokenHash && r.RevokedAt == null);
+
+        if (existingToken == null) return Unauthorized(new { error = "INVALID_REFRESH_TOKEN" });
+
+        existingToken.RevokedAt = DateTime.UtcNow;
         await authDb.SaveChangesAsync();
 
-        return Ok(
-            new
-            {
-                access_token = accessToken,
-                refresh_token = refreshToken,
-                expires_in = 900,
-            }
-        );
+        return Ok(new { message = "Logged Out" });
     }
+
 }
