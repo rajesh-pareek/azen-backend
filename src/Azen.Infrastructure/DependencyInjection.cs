@@ -13,6 +13,8 @@ public static class DependencyInjection
     {
         services.AddDbContext<AuthDbContext>(options =>
             options.UseSqlServer(configuration.GetConnectionString("AuthDb")));
+        services.AddDbContext<AppDbContext>(options =>
+            options.UseSqlServer(configuration.GetConnectionString("AppDb")));
 
         var useRealSMSServiceForOTP = bool.TryParse(configuration["FeatureFlags:UseRealSMS"], out var val) && val;
         Console.WriteLine($"real SMs feature flags : {useRealSMSServiceForOTP}");
