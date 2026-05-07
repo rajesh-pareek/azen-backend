@@ -29,6 +29,7 @@ public static class DependencyInjection
         }
         services.AddScoped<IOtpService, OtpService>();
         services.AddScoped<IJwtService, JwtService>();
+        services.AddScoped<IShipmentRefService, ShipmentRefService>();
 
         return services;
     }

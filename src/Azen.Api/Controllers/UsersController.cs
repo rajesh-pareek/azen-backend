@@ -1,9 +1,13 @@
 using Azen.Application.DTOs.Auth;
 using Azen.Infrastructure.Persistence;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 
 namespace Azen.Api.Controllers;
 
+[ApiController]
+[Route("api/v1/[controller]")]
+[Authorize]
 public class UsersController : ControllerBase
 {
     private readonly AuthDbContext authDb;
@@ -22,7 +26,7 @@ public class UsersController : ControllerBase
 
         if (user == null)
         {
-            return NotFound(new { error = "USER+NOT_FOUND" });
+            return NotFound(new { error = "USER_NOT_FOUND" });
         }
         return Ok(new
         {

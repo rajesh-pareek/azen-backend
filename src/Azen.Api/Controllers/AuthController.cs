@@ -5,9 +5,7 @@ using Azen.Application.DTOs.Auth;
 using Azen.Application.Interfaces;
 using Azen.Domain.Entities.Auth;
 using Azen.Infrastructure.Persistence;
-using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.AspNetCore.Mvc.ActionConstraints;
 using Microsoft.EntityFrameworkCore;
 [ApiController]
 [Route("api/v1/[controller]")]
@@ -63,7 +61,7 @@ public class AuthController : ControllerBase
         return Ok(new
         {
             auth_code = authCode,
-            user = new { Id = user.Id, name = user.Name, email = user.Email },
+            user = new { id = user.Id, name = user.Name, email = user.Email },
             organisations = memberships
 
         });
@@ -107,34 +105,10 @@ public class AuthController : ControllerBase
 
         if (user == null) return NotFound(new { error = "USER_NOT_FOUND" });
 
-        // Generate Access Tokens
-        //To Do: Replace Dummy Values With Real Org Lookup once AppDb is setup
-        /* var accessToken = jwtService.GenerateAccessToken(
-            userId: user.Id,
-            orgId: request.OrgId,
-            memberId: Guid.Empty, //placeholder until appdb
-            role: "transporter",
-            subRole: "member"
-        ); */
-
-        /* var refreshToken = jwtService.GenerateRefreshToken();
-        //Hash and store refresh token
-        var refreshTokenHash = Convert.ToBase64String(SHA256.HashData(Encoding.UTF8.GetBytes(refreshToken)));
-
-        var refreshTokenEntity = new RefreshToken
-        {
-            UserId = user.Id,
-            OrgId = request.OrgId,
-            TokenHash = refreshTokenHash,
-            ExpiresAt = DateTime.UtcNow.AddDays(int.Parse(config["Jwt:RefreshTokenExpiryDays"]!)),
-        }; */
-
-        /*  authDb.RefreshTokens.Add(refreshTokenEntity);
-         await authDb.SaveChangesAsync(); */
         var member = await appDb.OrganisationMembers.FirstOrDefaultAsync(m => m.UserId == user.Id && m.OrganisationId == request.OrgId && m.IsActive);
         if (member == null)
         {
-            return StatusCode(403, new { error = "NOT_A_MEMBER", messsage = "You are not a member of this organisation" });
+            return StatusCode(403, new { error = "NOT_A_MEMBER", message = "You are not a member of this organisation" });
         }
         var tokens = await GenerateTokenPair(user, request.OrgId, member.Id, member.Role, member.SubRole);
         return Ok(tokens);
@@ -157,7 +131,7 @@ public class AuthController : ControllerBase
         var member = await appDb.OrganisationMembers.FirstOrDefaultAsync(m => m.UserId == user.Id && m.OrganisationId == existingToken.OrgId && m.IsActive);
         if (member == null)
         {
-            return StatusCode(403, new { error = "NOT_A_MEMBER", messsage = "You are not a member of this organisation" });
+            return StatusCode(403, new { error = "NOT_A_MEMBER", message = "You are not a member of this organisation" });
         }
 
         var tokens = await GenerateTokenPair(user, existingToken.OrgId, member.Id, member.Role, member.SubRole);

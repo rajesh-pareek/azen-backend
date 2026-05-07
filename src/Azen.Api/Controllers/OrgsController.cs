@@ -7,10 +7,8 @@ using Azen.Domain.Entities.App;
 using Azen.Domain.Entities.Auth;
 using Azen.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Authorization;
-using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
-using Microsoft.Extensions.Configuration.UserSecrets;
 
 namespace Azen.Api.Controllers;
 
@@ -32,6 +30,7 @@ public class OrgsController : ControllerBase
         this.appDb = appDb;
         this.config = config;
     }
+
 
     [HttpPost]
     public async Task<IActionResult> CreateOrg([FromBody] CreateOrgRequest request)
@@ -81,6 +80,7 @@ public class OrgsController : ControllerBase
             OrganisationId = org.Id
         };
 
+        appDb.ShipmentRefSequences.Add(refSeq);
         await appDb.SaveChangesAsync();
 
         //7. Issue Jwt tokens
@@ -115,12 +115,13 @@ public class OrgsController : ControllerBase
         });
     }
 
+    [Authorize]
     [HttpPost("current/members/invite")]
     public async Task<IActionResult> InviteMember([FromBody] InviteMemberRequest request)
     {
         //1. get org_id and role from jwt
-        var org_id = Guid.Parse(User.FindFirst("org_id")!.Value);
-        var callerRole = User.FindFirst("role")!.Value;
+        var org_id = Guid.Parse(User.FindFirst("orgId")!.Value);
+        var callerRole = User.FindFirst("user_role")!.Value;
 
         //2. only tranporters can invite
 
@@ -131,12 +132,14 @@ public class OrgsController : ControllerBase
 
         if (request.Role != "fleet_owner" && request.Role != "driver")
         {
-            return BadRequest(new { error = "INVALIID_ROLE", message = "Role must be fleet owner or driver " });
+            return BadRequest(new { error = "INVALID_ROLE", message = "Role must be fleet owner or driver " });
         }
         //4. check authDb for existing user - create if not exists
+        var isNewUser = false;
         var user = await authDb.Users.FirstOrDefaultAsync(u => u.Phone == request.Phone);
         if (user == null)
         {
+            isNewUser = true;
             user = new User
             {
                 Phone = request.Phone,
@@ -150,7 +153,7 @@ public class OrgsController : ControllerBase
         var existingMember = await appDb.OrganisationMembers.FirstOrDefaultAsync(m => m.OrganisationId == org_id && m.UserId == user.Id);
 
         if (existingMember != null)
-            return Conflict(new { error = "Already_MEMBER", message = "This user is already a member of your organisation." });
+            return Conflict(new { error = "ALREADY_MEMBER", message = "This user is already a member of your organisation." });
 
         //6. create membership
 
@@ -171,7 +174,7 @@ public class OrgsController : ControllerBase
             member_id = member.Id,
             user_id = user.Id,
             role = member.Role,
-            is_new_user = user.CreatedAt > DateTime.UtcNow.AddSeconds(-5)//rough check
+            is_new_user = isNewUser
         });
     }
 
@@ -179,7 +182,7 @@ public class OrgsController : ControllerBase
     [HttpGet("current")]
     public async Task<IActionResult> GetCurrentOrg()
     {
-        var orgId = Guid.Parse(User.FindFirst("org_id")!.Value);
+        var orgId = Guid.Parse(User.FindFirst("orgId")!.Value);
         var org = await appDb.Organisations.FindAsync(orgId);
 
         if (org == null)
@@ -202,10 +205,9 @@ public class OrgsController : ControllerBase
     [HttpGet("current/members")]
     public async Task<IActionResult> GetMembers()
     {
-        var orgId = Guid.Parse(User.FindFirst("org_id")!.Value);
-        var callerRole = User.FindFirst("role")!.Value;
-
-        //only transporters can see full member list
+        var orgId = Guid.Parse(User.FindFirst("orgId")!.Value);
+        var callerRole = User.FindFirst("user_role")!.Value;
+        //only transporters can see full member list, member name is not present in system, need to look it up from auth/identity db
         if (callerRole != "transporter")
             return StatusCode(403, new { error = "FORBIDDEN" });
 
@@ -217,7 +219,7 @@ public class OrgsController : ControllerBase
             user_id = m.UserId,
             role = m.Role,
             sub_role = m.SubRole,
-            joinedAt = m.JoinedAt
+            joinedAt = m.JoinedAt,
         })
         .ToListAsync();
 

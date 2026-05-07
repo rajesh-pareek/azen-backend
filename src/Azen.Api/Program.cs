@@ -1,3 +1,5 @@
+
+using System.IdentityModel.Tokens.Jwt;
 using Azen.Infrastructure;
 var builder = WebApplication.CreateBuilder(args);
 
@@ -37,9 +39,11 @@ builder.Services.AddSwaggerGen(options =>
 
 );
 
+JwtSecurityTokenHandler.DefaultInboundClaimTypeMap.Clear();
 builder.Services.AddAuthentication("Bearer")
     .AddJwtBearer("Bearer", options =>
     {
+        options.MapInboundClaims = false;
         var jwtSecret = builder.Configuration["Jwt:Secret"]!;
         options.TokenValidationParameters = new Microsoft.IdentityModel.Tokens.TokenValidationParameters
         {
