@@ -314,4 +314,49 @@ public class ShipmentsController : ControllerBase
             status = shipment.Status
         });
     }
+
+    [HttpPatch("{id}/status")]
+    public async Task<IActionResult> UpdateStatus(Guid id, [FromBody] UpdateStatusRequest request)
+    {
+        var orgId = GetOrgId();
+        var role = GetRole();
+
+        //only transporters can manually advance status
+        if (role != "transporter")
+            return StatusCode(403, new { error = "FORBIDDEN" });
+
+        var shipment = await appDb.Shipments.FirstOrDefaultAsync(s => s.Id == id && s.OrganisationId == orgId);
+        if (shipment == null)
+        {
+            return NotFound(new { error = "SHIPMENT_NOT_FOUND" });
+        }
+
+        //validate forawrd-only transitions
+
+        var validTransitions = new Dictionary<string, List<string>>
+        {
+            {"created", new List<string> {"assigned", "pod_uploaded"}},
+            {"assigned", new List<string> {"pod_uploaded"}},
+            {"pod_uploaded", new List<string> {"shared"}}
+        };
+
+        if (!validTransitions.ContainsKey(shipment.Status) || !validTransitions[shipment.Status].Contains(request.Status))
+        {
+            return BadRequest(new
+            {
+                error = "INVALID_TRANSITION",
+                message = $"Cannot transition from '{shipment.Status}' to '{request.Status}'"
+            });
+        }
+
+        shipment.Status = request.Status;
+        shipment.UpdatedAt = DateTime.UtcNow;
+        await appDb.SaveChangesAsync();
+
+        return Ok(new
+        {
+            shipment_id = shipment.Id,
+            status = shipment.Status
+        });
+    }
 }
