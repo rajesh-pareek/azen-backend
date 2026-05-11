@@ -75,7 +75,7 @@ public class ShipmentsController : ControllerBase
         return Created("", new
         {
             id = shipment.Id,
-            refrence_number = shipment.ReferenceNumber,
+            reference_number = shipment.ReferenceNumber,
             status = shipment.Status,
             created_at = shipment.CreatedAt
         });
@@ -145,7 +145,7 @@ public class ShipmentsController : ControllerBase
             status = shipment.Status,
             consignor_name = shipment.ConsignorName,
             consignor_phone = shipment.ConsignorPhone,
-            conginee_name = shipment.ConsigneeName,
+            consignee_name = shipment.ConsigneeName,
             consignee_phone = shipment.ConsigneePhone,
             goods_description = shipment.GoodsDescription,
             vehicle_number = shipment.VehicleNumber,
@@ -249,8 +249,8 @@ public class ShipmentsController : ControllerBase
         return Ok(new
         {
             shipment_id = shipment.Id,
-            fleet_onwer_name = shipment.FleetOwnerName,
-            fleet_onwer_in_system = shipment.FleetOwnerInSystem,
+            fleet_owner_name = shipment.FleetOwnerName,
+            fleet_owner_in_system = shipment.FleetOwnerInSystem,
             status = shipment.Status
         });
     }

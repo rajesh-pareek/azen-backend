@@ -17,10 +17,8 @@ public static class DependencyInjection
             options.UseSqlServer(configuration.GetConnectionString("AppDb")));
 
         var useRealSMSServiceForOTP = bool.TryParse(configuration["FeatureFlags:UseRealSMS"], out var val) && val;
-        Console.WriteLine($"real SMs feature flags : {useRealSMSServiceForOTP}");
         if (useRealSMSServiceForOTP)
         {
-            /* services.AddHttpClient<ISmsService, RealSmsService>(); */
             services.AddHttpClient<ISmsService, RealSmsService>();
         }
         else

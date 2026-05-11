@@ -1,6 +1,5 @@
 using System.Security.Cryptography;
 using System.Text;
-using Azen.Application.DTOs;
 using Azen.Application.DTOs.Auth;
 using Azen.Application.Interfaces;
 using Azen.Domain.Entities.Auth;
@@ -39,7 +38,7 @@ public class AuthController : ControllerBase
         var authCode = await otpService.VerifyOtpAsync(request.Phone, request.Otp);
         if (authCode == null) return Unauthorized(new { error = "INVALID_OTP" });
 
-        var user = authDb.Users.FirstOrDefault(u => u.Phone == request.Phone);
+        var user = await authDb.Users.FirstOrDefaultAsync(u => u.Phone == request.Phone);
         if (user == null)
         {
             user = new User

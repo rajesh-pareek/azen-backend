@@ -126,7 +126,7 @@ public class OrgsController : ControllerBase
         //2. only tranporters can invite
 
         if (callerRole != "transporter")
-            return StatusCode(403, new { error = "FORBIDDEN", message = "Only transporters ca invite members" });
+            return StatusCode(403, new { error = "FORBIDDEN", message = "Only transporters can invite members" });
 
         //3. validate role
 

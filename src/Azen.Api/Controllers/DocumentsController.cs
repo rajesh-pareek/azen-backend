@@ -89,8 +89,8 @@ public class DocumentsController : ControllerBase
         var fileExtension = Path.GetExtension(file.FileName);
         var storageKey = $"{orgId}/{shipmentId}/{Guid.NewGuid()}{fileExtension}";
 
-        using var Stream = file.OpenReadStream();
-        await storageService.UploadAsync(storageKey, Stream, file.ContentType);
+        using var stream = file.OpenReadStream();
+        await storageService.UploadAsync(storageKey, stream, file.ContentType);
 
 
         //6. Save metadata to DB
@@ -123,7 +123,7 @@ public class DocumentsController : ControllerBase
             original_filename = document.OriginalFileName,
             file_size_bytes = document.FileSizeBytes,
             mime_type = document.MimeType,
-            uplaoder_role = document.UploaderRole,
+            uploader_role = document.UploaderRole,
             created_at = document.CreatedAt
         });
     }

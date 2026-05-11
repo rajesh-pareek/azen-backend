@@ -1,7 +1,6 @@
 using Amazon.S3;
 using Amazon.S3.Model;
 using Azen.Application.Interfaces;
-using Microsoft.EntityFrameworkCore.Metadata.Internal;
 using Microsoft.Extensions.Configuration;
 
 namespace Azen.Infrastructure.Services;
