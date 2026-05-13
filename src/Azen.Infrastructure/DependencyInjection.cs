@@ -1,6 +1,8 @@
-using Azen.Infrastructure.Services;
+using Azen.Application.Authorization;
 using Azen.Application.Interfaces;
+using Azen.Infrastructure.Authorization;
 using Azen.Infrastructure.Persistence;
+using Azen.Infrastructure.Services;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
@@ -30,6 +32,7 @@ public static class DependencyInjection
         services.AddScoped<IShipmentRefService, ShipmentRefService>();
         services.AddScoped<IShipmentEventService, ShipmentEventService>();
         services.AddSingleton<IStorageService, S3StorageService>();
+        services.AddSingleton<IShipmentAccessPolicy, ShipmentAccessPolicy>();
         return services;
     }
 }

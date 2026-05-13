@@ -1,4 +1,6 @@
 using System.Security.Cryptography;
+using Azen.Api.Authorization;
+using Azen.Application.Authorization;
 using Azen.Application.DTOs.App;
 using Azen.Application.Interfaces;
 using Azen.Domain.Entities.App;
@@ -16,17 +18,19 @@ public class ShareLinksController : ControllerBase
     private readonly AppDbContext appDb;
     private readonly IStorageService storageService;
     private readonly IShipmentEventService eventService;
+    private readonly IShipmentAccessPolicy policy;
 
-    public ShareLinksController(AppDbContext appDb, IStorageService storageService, IShipmentEventService eventService)
+    public ShareLinksController(
+        AppDbContext appDb,
+        IStorageService storageService,
+        IShipmentEventService eventService,
+        IShipmentAccessPolicy policy)
     {
         this.appDb = appDb;
         this.storageService = storageService;
         this.eventService = eventService;
+        this.policy = policy;
     }
-
-    private Guid GetOrgId() => Guid.Parse(User.FindFirst("orgId")!.Value);
-    private Guid GetMemberId() => Guid.Parse(User.FindFirst("member_id")!.Value);
-    private string GetRole() => User.FindFirst("user_role")!.Value;
 
     //generate a random base62 token (10 chars)
     private static string GenerateToken()
@@ -44,19 +48,19 @@ public class ShareLinksController : ControllerBase
     [HttpPost("api/v1/shipments/{shipmentId}/share-links")]
     public async Task<IActionResult> CreateShareLink(Guid shipmentId, [FromBody] CreateShareLinkRequest request)
     {
-        var orgId = GetOrgId();
-        var memberId = GetMemberId();
-        var role = GetRole();
+        var ctx = User.ToShipmentAccessContext();
 
-        if (role != "transporter") return StatusCode(403, new { error = "FORBIDDEN" });
-
-        var shipment = await appDb.Shipments.FirstOrDefaultAsync(s => s.Id == shipmentId && s.OrganisationId == orgId);
-
+        var shipment = await appDb.Shipments.FirstOrDefaultAsync(s => s.Id == shipmentId && s.OrganisationId == ctx.OrgId);
         if (shipment == null) return NotFound(new { error = "SHIPMENT_NOT_FOUND" });
 
-        //can only share when POD is uploaded or already shared
-        if (shipment.Status != "pod_uploaded" && shipment.Status != "shared")
+        // Policy enforces transporter-only AND status in (pod_uploaded, shared).
+        if (!policy.CanGenerateShareLink(ctx, shipment))
+        {
+            // Distinguish the two failure modes so the client can react.
+            if (ctx.Role != "transporter")
+                return StatusCode(403, new { error = "FORBIDDEN" });
             return BadRequest(new { error = "INVALID_STATUS", message = "Shipment must have POD uploaded before sharing" });
+        }
 
         var token = GenerateToken();
 
@@ -64,22 +68,22 @@ public class ShareLinksController : ControllerBase
         {
             Token = token,
             ShipmentId = shipmentId,
-            CreatedByMemberId = memberId,
+            CreatedByMemberId = ctx.MemberId,
             ExpiresAt = DateTime.UtcNow.AddDays(request.ExpiresInDays ?? 30),
             VisibleDocTypes = System.Text.Json.JsonSerializer.Serialize(request.VisibleDocTypes)
         };
 
         appDb.ShareLinks.Add(shareLink);
         var previousStatus = shipment.Status;
-        //auto-advance status to shared
 
+        //auto-advance status to shared
         if (shipment.Status == "pod_uploaded")
             shipment.Status = "shared";
 
         shipment.UpdatedAt = DateTime.UtcNow;
-        // EVENT(S)
+
         await eventService.LogAsync(
-            shipment.Id, ShipmentEventType.ShareLinkGenerated, memberId, role,
+            shipment.Id, ShipmentEventType.ShareLinkGenerated, ctx.MemberId, ctx.Role,
             new
             {
                 link_id = shareLink.Id,
@@ -90,7 +94,7 @@ public class ShareLinksController : ControllerBase
         if (previousStatus != shipment.Status)
         {
             await eventService.LogAsync(
-                shipment.Id, ShipmentEventType.StatusChanged, memberId, role,
+                shipment.Id, ShipmentEventType.StatusChanged, ctx.MemberId, ctx.Role,
                 new { from = previousStatus, to = shipment.Status, trigger = "share_link_generated" });
         }
         await appDb.SaveChangesAsync();
@@ -103,21 +107,20 @@ public class ShareLinksController : ControllerBase
             expires_at = shareLink.ExpiresAt,
             visible_doc_types = request.VisibleDocTypes
         });
-
     }
 
     [HttpGet("api/v1/shipments/{shipmentId}/share-links")]
     public async Task<IActionResult> ListShareLinks(Guid shipmentId)
     {
-        var orgId = GetOrgId();
-        var role = GetRole();
+        var ctx = User.ToShipmentAccessContext();
 
-        if (role != "transporter")
-            return StatusCode(403, new { error = "FORBIDDEN" });
-
-        var shipment = await appDb.Shipments.FirstOrDefaultAsync(s => s.Id == shipmentId && s.OrganisationId == orgId);
-
+        var shipment = await appDb.Shipments.FirstOrDefaultAsync(s => s.Id == shipmentId && s.OrganisationId == ctx.OrgId);
         if (shipment == null) return NotFound(new { error = "SHIPMENT_NOT_FOUND" });
+
+        // Listing share links is a transporter-only audit-style action.
+        // We reuse CanViewAuditTrail since the rules are identical (transporter, same org).
+        if (!policy.CanViewAuditTrail(ctx, shipment))
+            return StatusCode(403, new { error = "FORBIDDEN" });
 
         var links = await appDb.ShareLinks
           .Where(l => l.ShipmentId == shipmentId && !l.IsRevoked)
@@ -133,36 +136,35 @@ public class ShareLinksController : ControllerBase
           })
           .ToListAsync();
 
-
         return Ok(links);
     }
 
     [HttpDelete("api/v1/share-links/{linkId}")]
     public async Task<IActionResult> RevokeShareLink(Guid linkId)
     {
-        var orgId = GetOrgId();
-        var role = GetRole();
-        var memberId = GetMemberId();
-
-        if (role != "transporter")
-            return StatusCode(403, new { error = "FORBIDDEN" });
+        var ctx = User.ToShipmentAccessContext();
 
         var link = await appDb.ShareLinks
             .Include(l => l.Shipment)
-            .FirstOrDefaultAsync(l => l.Id == linkId && l.Shipment.OrganisationId == orgId);
+            .FirstOrDefaultAsync(l => l.Id == linkId && l.Shipment.OrganisationId == ctx.OrgId);
 
         if (link == null) return NotFound(new { error = "LINK_NOT_FOUND" });
+
+        // Same-org is guaranteed by the query above; policy enforces transporter-only.
+        if (!policy.CanViewAuditTrail(ctx, link.Shipment))
+            return StatusCode(403, new { error = "FORBIDDEN" });
+
         link.IsRevoked = true;
-        // EVENT
+
         await eventService.LogAsync(
-            link.ShipmentId, ShipmentEventType.ShareLinkRevoked, memberId, role,
+            link.ShipmentId, ShipmentEventType.ShareLinkRevoked, ctx.MemberId, ctx.Role,
             new { link_id = link.Id, token = link.Token });
 
         await appDb.SaveChangesAsync();
         return Ok(new { message = "Share link revoked" });
     }
 
-    //public endpoint - not auth required
+    //public endpoint - no auth required
     [AllowAnonymous]
     [HttpGet("api/v1/public/s/{token}")]
     public async Task<IActionResult> ViewSharedShipment(string token)
@@ -186,7 +188,6 @@ public class ShareLinksController : ControllerBase
         var shipment = link.Shipment;
 
         //get visible doc types
-
         var visibleDocTypes = System.Text.Json.JsonSerializer.Deserialize<List<string>>(link.VisibleDocTypes) ?? new List<string>();
 
         //fetch documents filtered by visible types
@@ -194,7 +195,7 @@ public class ShareLinksController : ControllerBase
            .Where(d => d.ShipmentId == shipment.Id && !d.IsDeleted && visibleDocTypes.Contains(d.DocType))
            .ToListAsync();
 
-        //Generate pre signed Urls (30 minutes for public access)
+        //Generate presigned URLs (30 minutes for public access)
         var docResults = documents.Select(d => new
         {
             id = d.Id,
@@ -220,6 +221,5 @@ public class ShareLinksController : ControllerBase
                 expires_at = link.ExpiresAt
             }
         });
-
     }
 }

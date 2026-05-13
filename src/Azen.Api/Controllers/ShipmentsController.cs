@@ -1,3 +1,5 @@
+using Azen.Api.Authorization;
+using Azen.Application.Authorization;
 using Azen.Application.DTOs.App;
 using Azen.Application.Interfaces;
 using Azen.Domain.Entities.App;
@@ -17,40 +19,39 @@ public class ShipmentsController : ControllerBase
     private readonly AppDbContext appDb;
     private readonly IShipmentRefService refService;
     private readonly IShipmentEventService eventService;
+    private readonly IShipmentAccessPolicy policy;
 
-    public ShipmentsController(AuthDbContext authDb, AppDbContext appDb, IShipmentRefService refService, IShipmentEventService eventService)
+    public ShipmentsController(
+        AuthDbContext authDb,
+        AppDbContext appDb,
+        IShipmentRefService refService,
+        IShipmentEventService eventService,
+        IShipmentAccessPolicy policy)
     {
         this.authDb = authDb;
         this.appDb = appDb;
         this.refService = refService;
         this.eventService = eventService;
+        this.policy = policy;
     }
-
-    //extrat jwt claims
-    private Guid GetOrgId() => Guid.Parse(User.FindFirst("orgId")!.Value);
-    private Guid GetMemberId() => Guid.Parse(User.FindFirst("member_id")!.Value);
-    private string GetRole() => User.FindFirst("user_role")!.Value;
-
 
     [HttpPost]
     public async Task<IActionResult> CreateShipment([FromBody] CreateShipmentRequest request)
     {
-        var role = GetRole();
-        if (role != "transporter")
-            return StatusCode(403, new { error = "FORBIDDEN", message = "Only transporters can create shipments" });
+        var ctx = User.ToShipmentAccessContext();
 
-        var orgId = GetOrgId();
-        var memberId = GetMemberId();
+        if (!policy.CanCreateShipment(ctx))
+            return StatusCode(403, new { error = "FORBIDDEN", message = "Only transporters can create shipments" });
 
         //Auto generate reference number if not provided
         var refNumber = request.ReferenceNumber;
         if (string.IsNullOrWhiteSpace(refNumber))
         {
-            refNumber = await refService.GenerateReferenceNumberAsync(orgId);
+            refNumber = await refService.GenerateReferenceNumberAsync(ctx.OrgId);
         }
 
         //check for duplicate reference number in this org
-        var duplicate = await appDb.Shipments.AnyAsync(s => s.OrganisationId == orgId && s.ReferenceNumber == refNumber);
+        var duplicate = await appDb.Shipments.AnyAsync(s => s.OrganisationId == ctx.OrgId && s.ReferenceNumber == refNumber);
 
         if (duplicate)
         {
@@ -59,7 +60,7 @@ public class ShipmentsController : ControllerBase
 
         var shipment = new Shipment
         {
-            OrganisationId = orgId,
+            OrganisationId = ctx.OrgId,
             ReferenceNumber = refNumber,
             ConsignorName = request.ConsignorName,
             ConsignorPhone = request.ConsignorPhone,
@@ -68,12 +69,12 @@ public class ShipmentsController : ControllerBase
             GoodsDescription = request.GoodsDescription,
             Notes = request.Notes,
             Status = "created",
-            CreatedByMemberId = memberId,
+            CreatedByMemberId = ctx.MemberId,
         };
 
         appDb.Shipments.Add(shipment);
 
-        await eventService.LogAsync(shipment.Id, ShipmentEventType.ShipmentCreated, memberId, role,
+        await eventService.LogAsync(shipment.Id, ShipmentEventType.ShipmentCreated, ctx.MemberId, ctx.Role,
         new { reference_number = shipment.ReferenceNumber });
         await appDb.SaveChangesAsync();
 
@@ -89,19 +90,9 @@ public class ShipmentsController : ControllerBase
     [HttpGet]
     public async Task<IActionResult> ListShipments()
     {
-        var orgId = GetOrgId();
-        var memberId = GetMemberId();
-        var role = GetRole();
+        var ctx = User.ToShipmentAccessContext();
 
-        IQueryable<Shipment> query = appDb.Shipments.Where(s => s.OrganisationId == orgId);
-
-        // Role -based filtering
-        if (role == "fleet_owner")
-            query = query.Where(s => s.FleetOwnerMemberId == memberId);
-        else if (role == "driver")
-            query = query.Where(s => s.DriverMemberId == memberId);
-
-        //transporter sees all shipment in org - no extra filter
+        var query = policy.FilterVisible(appDb.Shipments, ctx);
 
         var shipments = await query
            .OrderByDescending(s => s.CreatedAt)
@@ -116,7 +107,6 @@ public class ShipmentsController : ControllerBase
                driver_name = s.DriverName,
                vehicle_number = s.VehicleNumber,
                created_at = s.CreatedAt
-
            })
            .ToListAsync();
 
@@ -126,21 +116,13 @@ public class ShipmentsController : ControllerBase
     [HttpGet("{id}")]
     public async Task<IActionResult> GetShipment(Guid id)
     {
-        var orgId = GetOrgId();
-        var memberId = GetMemberId();
-        var role = GetRole();
+        var ctx = User.ToShipmentAccessContext();
 
-        var shipment = await appDb.Shipments.FirstOrDefaultAsync(s => s.Id == id && s.OrganisationId == orgId);
-
+        var shipment = await appDb.Shipments.FirstOrDefaultAsync(s => s.Id == id && s.OrganisationId == ctx.OrgId);
         if (shipment == null)
             return NotFound(new { error = "SHIPMENT_NOT_FOUND" });
 
-        // role based access check
-
-        if (role == "fleet_owner" && shipment.FleetOwnerMemberId != memberId)
-            return StatusCode(403, new { error = "FORBIDDEN" });
-
-        if (role == "driver" && shipment.DriverMemberId != memberId)
+        if (!policy.CanView(ctx, shipment))
             return StatusCode(403, new { error = "FORBIDDEN" });
 
         return Ok(new
@@ -169,20 +151,22 @@ public class ShipmentsController : ControllerBase
     [HttpPatch("{id}")]
     public async Task<IActionResult> UpdateShipment(Guid id, [FromBody] UpdateShipmentRequest request)
     {
-        var orgId = GetOrgId();
-        var memberId = GetMemberId();
-        var role = GetRole();
+        var ctx = User.ToShipmentAccessContext();
 
-        var shipment = await appDb.Shipments.FirstOrDefaultAsync(s => s.Id == id && s.OrganisationId == orgId);
-
+        var shipment = await appDb.Shipments.FirstOrDefaultAsync(s => s.Id == id && s.OrganisationId == ctx.OrgId);
         if (shipment == null)
             return NotFound(new { error = "SHIPMENT_NOT_FOUND" });
+
+        var canEditAll = policy.CanEditAllFields(ctx, shipment);
+        var canEditOps = policy.CanEditOperationalFields(ctx, shipment);
+
+        if (!canEditAll && !canEditOps)
+            return StatusCode(403, new { error = "FORBIDDEN" });
 
         var oldVehicleNumber = shipment.VehicleNumber;
         var changedFields = new List<string>();
 
-        //transporter can edit all fields; fleet owner can edit vehicle n umber and notes only
-        if (role == "transporter")
+        if (canEditAll)
         {
             if (request.ConsignorName != null) { shipment.ConsignorName = request.ConsignorName; changedFields.Add("consignor_name"); }
             if (request.ConsignorPhone != null) { shipment.ConsignorPhone = request.ConsignorPhone; changedFields.Add("consignor_phone"); }
@@ -192,36 +176,27 @@ public class ShipmentsController : ControllerBase
             if (request.VehicleNumber != null) { shipment.VehicleNumber = request.VehicleNumber; changedFields.Add("vehicle_number"); }
             if (request.Notes != null) { shipment.Notes = request.Notes; changedFields.Add("notes"); }
         }
-        else if (role == "fleet_owner" && shipment.FleetOwnerMemberId == memberId)
+        else // canEditOps only - vehicle + notes
         {
             if (request.VehicleNumber != null) { shipment.VehicleNumber = request.VehicleNumber; changedFields.Add("vehicle_number"); }
             if (request.Notes != null) { shipment.Notes = request.Notes; changedFields.Add("notes"); }
-        }
-        else
-        {
-            return StatusCode(403, new { error = "FORBIDDEN" });
         }
 
         shipment.UpdatedAt = DateTime.UtcNow;
 
         if (changedFields.Contains("vehicle_number"))
         {
-            await eventService.LogAsync(shipment.Id, ShipmentEventType.VehicleUpdated, memberId, role,
+            await eventService.LogAsync(shipment.Id, ShipmentEventType.VehicleUpdated, ctx.MemberId, ctx.Role,
             new { from = oldVehicleNumber, to = shipment.VehicleNumber });
         }
 
-        //log meta data update if anything other than vehicle numbe  is changed
-
         var nonVehicleChanges = changedFields.Where(f => f != "vehicle_number").ToList();
-
         if (nonVehicleChanges.Count > 0)
         {
-            await eventService.LogAsync(shipment.Id, ShipmentEventType.MetadataUpdated, memberId, role,
-            new
-            {
-                fields = nonVehicleChanges
-            });
+            await eventService.LogAsync(shipment.Id, ShipmentEventType.MetadataUpdated, ctx.MemberId, ctx.Role,
+            new { fields = nonVehicleChanges });
         }
+
         await appDb.SaveChangesAsync();
         return Ok(new { message = "Shipment_Updated" });
     }
@@ -229,17 +204,14 @@ public class ShipmentsController : ControllerBase
     [HttpPost("{id}/assign-fleet-owner")]
     public async Task<IActionResult> AssignFleetOwner(Guid id, [FromBody] AssignFleetOwnerRequest request)
     {
-        var orgId = GetOrgId();
-        var role = GetRole();
-        var memberId = GetMemberId();
+        var ctx = User.ToShipmentAccessContext();
 
-        if (role != "transporter")
-            return StatusCode(403, new { error = "FORBIDDEN" });
-
-        var shipment = await appDb.Shipments.FirstOrDefaultAsync(s => s.Id == id && s.OrganisationId == orgId);
-
+        var shipment = await appDb.Shipments.FirstOrDefaultAsync(s => s.Id == id && s.OrganisationId == ctx.OrgId);
         if (shipment == null)
             return NotFound(new { error = "SHIPMENT_NOT_FOUND" });
+
+        if (!policy.CanAssignFleetOwner(ctx, shipment))
+            return StatusCode(403, new { error = "FORBIDDEN" });
 
         var wasAlreadyAssigned = shipment.FleetOwnerMemberId != null || !string.IsNullOrEmpty(shipment.FleetOwnerName);
         var previousStatus = shipment.Status;
@@ -247,14 +219,14 @@ public class ShipmentsController : ControllerBase
         if (request.MemberId != null)
         {
             //in system assignment
-            var member = await appDb.OrganisationMembers.FirstOrDefaultAsync(m => m.Id == request.MemberId && m.OrganisationId == orgId && m.IsActive);
+            var member = await appDb.OrganisationMembers.FirstOrDefaultAsync(m => m.Id == request.MemberId && m.OrganisationId == ctx.OrgId && m.IsActive);
             if (member == null)
                 return NotFound(new { error = "MEMBER_NOT_FOUND" });
 
             var memberUser = await authDb.Users.FindAsync(member.UserId);
 
             shipment.FleetOwnerMemberId = member.Id;
-            shipment.FleetOwnerName = memberUser?.Name; //will be looked up from member record
+            shipment.FleetOwnerName = memberUser?.Name;
             shipment.FleetOwnerPhone = memberUser?.Phone;
             shipment.FleetOwnerInSystem = true;
         }
@@ -278,7 +250,7 @@ public class ShipmentsController : ControllerBase
         shipment.UpdatedAt = DateTime.UtcNow;
 
         var assignmentType = wasAlreadyAssigned ? ShipmentEventType.FleetOwnerReassigned : ShipmentEventType.FleetOwnerAssigned;
-        await eventService.LogAsync(shipment.Id, assignmentType, memberId, role,
+        await eventService.LogAsync(shipment.Id, assignmentType, ctx.MemberId, ctx.Role,
         new
         {
             in_system = shipment.FleetOwnerInSystem,
@@ -288,7 +260,7 @@ public class ShipmentsController : ControllerBase
 
         if (previousStatus != shipment.Status)
         {
-            await eventService.LogAsync(shipment.Id, ShipmentEventType.StatusChanged, memberId, role,
+            await eventService.LogAsync(shipment.Id, ShipmentEventType.StatusChanged, ctx.MemberId, ctx.Role,
             new
             {
                 from = previousStatus,
@@ -310,31 +282,22 @@ public class ShipmentsController : ControllerBase
     [HttpPost("{id}/assign-driver")]
     public async Task<IActionResult> AssignDriver(Guid id, [FromBody] AssignDriverRequest request)
     {
-        var orgId = GetOrgId();
-        var memberId = GetMemberId();
-        var role = GetRole();
+        var ctx = User.ToShipmentAccessContext();
 
-        //transporter r assigned fleet owner can assign driver
-        var shipment = await appDb.Shipments.FirstOrDefaultAsync(s => s.Id == id && s.OrganisationId == orgId);
+        var shipment = await appDb.Shipments.FirstOrDefaultAsync(s => s.Id == id && s.OrganisationId == ctx.OrgId);
         if (shipment == null)
             return NotFound(new { error = "SHIPMENT_NOT_FOUND" });
+
+        if (!policy.CanAssignDriver(ctx, shipment))
+            return StatusCode(403, new { error = "FORBIDDEN" });
 
         var wasAlreadyAssigned = shipment.DriverMemberId != null || !string.IsNullOrEmpty(shipment.DriverName);
         var previousStatus = shipment.Status;
         var oldVehicleNumber = shipment.VehicleNumber;
 
-
-        if (role == "fleet_owner" && shipment.FleetOwnerMemberId != memberId)
-        {
-            return StatusCode(403, new { error = "FORBIDDEN" });
-        }
-        if (role != "transporter" && role != "fleet_owner")
-            return StatusCode(403, new { error = "FORBIDDEN" });
-
         if (request.MemberId != null)
         {
-            var member = await appDb.OrganisationMembers.FirstOrDefaultAsync(m => m.Id == request.MemberId && m.OrganisationId == orgId && m.IsActive);
-
+            var member = await appDb.OrganisationMembers.FirstOrDefaultAsync(m => m.Id == request.MemberId && m.OrganisationId == ctx.OrgId && m.IsActive);
             if (member == null) return NotFound(new { error = "MEMBER_NOT_FOUND" });
 
             var memberUser = await authDb.Users.FindAsync(member.UserId);
@@ -356,8 +319,6 @@ public class ShipmentsController : ControllerBase
             return BadRequest(new { error = "INVALID_REQUEST", message = "Provide either memberId or name + Phone." });
         }
 
-
-
         var vehicleChanged = false;
         if (request.VehicleNumber != null && request.VehicleNumber != oldVehicleNumber)
         {
@@ -371,12 +332,11 @@ public class ShipmentsController : ControllerBase
 
         shipment.UpdatedAt = DateTime.UtcNow;
 
-        // EVENT(S)
         var assignmentType = wasAlreadyAssigned
             ? ShipmentEventType.DriverReassigned
             : ShipmentEventType.DriverAssigned;
         await eventService.LogAsync(
-            shipment.Id, assignmentType, memberId, role,
+            shipment.Id, assignmentType, ctx.MemberId, ctx.Role,
             new
             {
                 in_system = shipment.DriverInSystem,
@@ -387,17 +347,16 @@ public class ShipmentsController : ControllerBase
         if (vehicleChanged)
         {
             await eventService.LogAsync(
-                shipment.Id, ShipmentEventType.VehicleUpdated, memberId, role,
+                shipment.Id, ShipmentEventType.VehicleUpdated, ctx.MemberId, ctx.Role,
                 new { from = oldVehicleNumber, to = shipment.VehicleNumber });
         }
 
         if (previousStatus != shipment.Status)
         {
             await eventService.LogAsync(
-                shipment.Id, ShipmentEventType.StatusChanged, memberId, role,
+                shipment.Id, ShipmentEventType.StatusChanged, ctx.MemberId, ctx.Role,
                 new { from = previousStatus, to = shipment.Status, trigger = "driver_assigned" });
         }
-
 
         await appDb.SaveChangesAsync();
 
@@ -414,22 +373,16 @@ public class ShipmentsController : ControllerBase
     [HttpPatch("{id}/status")]
     public async Task<IActionResult> UpdateStatus(Guid id, [FromBody] UpdateStatusRequest request)
     {
-        var orgId = GetOrgId();
-        var role = GetRole();
-        var memberId = GetMemberId();
+        var ctx = User.ToShipmentAccessContext();
 
-        //only transporters can manually advance status
-        if (role != "transporter")
+        var shipment = await appDb.Shipments.FirstOrDefaultAsync(s => s.Id == id && s.OrganisationId == ctx.OrgId);
+        if (shipment == null)
+            return NotFound(new { error = "SHIPMENT_NOT_FOUND" });
+
+        if (!policy.CanChangeStatus(ctx, shipment))
             return StatusCode(403, new { error = "FORBIDDEN" });
 
-        var shipment = await appDb.Shipments.FirstOrDefaultAsync(s => s.Id == id && s.OrganisationId == orgId);
-        if (shipment == null)
-        {
-            return NotFound(new { error = "SHIPMENT_NOT_FOUND" });
-        }
-
-        //validate forawrd-only transitions
-
+        //validate forward-only transitions
         var validTransitions = new Dictionary<string, List<string>>
         {
             {"created", new List<string> {"assigned", "pod_uploaded"}},
@@ -451,7 +404,7 @@ public class ShipmentsController : ControllerBase
         shipment.UpdatedAt = DateTime.UtcNow;
 
         await eventService.LogAsync(
-            shipment.Id, ShipmentEventType.StatusChanged, memberId, role,
+            shipment.Id, ShipmentEventType.StatusChanged, ctx.MemberId, ctx.Role,
             new { from = previousStatus, to = shipment.Status, trigger = "manual" });
 
         await appDb.SaveChangesAsync();
@@ -463,21 +416,19 @@ public class ShipmentsController : ControllerBase
         });
     }
 
-    // NEW: audit trail read endpoint
+    // Audit trail read endpoint
     [HttpGet("{id}/events")]
     public async Task<IActionResult> GetShipmentEvents(Guid id)
     {
-        var orgId = GetOrgId();
-        var role = GetRole();
-
-        // Audit trail is transporter-only (per mvp-design §7.3 / §8 implicit)
-        if (role != "transporter")
-            return StatusCode(403, new { error = "FORBIDDEN" });
+        var ctx = User.ToShipmentAccessContext();
 
         var shipment = await appDb.Shipments
             .AsNoTracking()
-            .FirstOrDefaultAsync(s => s.Id == id && s.OrganisationId == orgId);
+            .FirstOrDefaultAsync(s => s.Id == id && s.OrganisationId == ctx.OrgId);
         if (shipment == null) return NotFound(new { error = "SHIPMENT_NOT_FOUND" });
+
+        if (!policy.CanViewAuditTrail(ctx, shipment))
+            return StatusCode(403, new { error = "FORBIDDEN" });
 
         var events = await appDb.ShipmentEvents
             .AsNoTracking()
@@ -489,12 +440,11 @@ public class ShipmentsController : ControllerBase
                 event_type = e.EventType,
                 actor_id = e.ActorId,
                 actor_role = e.ActorRole,
-                payload = e.Payload, // raw JSON string; client parses
+                payload = e.Payload,
                 created_at = e.CreatedAt
             })
             .ToListAsync();
 
         return Ok(events);
     }
-
 }

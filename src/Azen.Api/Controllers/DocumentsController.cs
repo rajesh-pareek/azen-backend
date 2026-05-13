@@ -1,4 +1,6 @@
+using Azen.Api.Authorization;
 using Azen.Api.DTOs;
+using Azen.Application.Authorization;
 using Azen.Application.Interfaces;
 using Azen.Domain.Entities.App;
 using Azen.Infrastructure.Persistence;
@@ -16,17 +18,19 @@ public class DocumentsController : ControllerBase
     private readonly AppDbContext appDb;
     private readonly IStorageService storageService;
     private readonly IShipmentEventService eventService;
+    private readonly IShipmentAccessPolicy policy;
 
-    public DocumentsController(AppDbContext appDb, IStorageService storageService, IShipmentEventService eventService)
+    public DocumentsController(
+        AppDbContext appDb,
+        IStorageService storageService,
+        IShipmentEventService eventService,
+        IShipmentAccessPolicy policy)
     {
         this.appDb = appDb;
         this.storageService = storageService;
         this.eventService = eventService;
+        this.policy = policy;
     }
-
-    private Guid GetOrgId() => Guid.Parse(User.FindFirst("orgId")!.Value);
-    private Guid GetMemberId() => Guid.Parse(User.FindFirst("member_id")!.Value);
-    private string GetRole() => User.FindFirst("user_role")!.Value;
 
     private static readonly HashSet<string> AllowedMimeTypes = new()
     {
@@ -44,9 +48,7 @@ public class DocumentsController : ControllerBase
     [Consumes("multipart/form-data")]
     public async Task<IActionResult> UploadDocument(Guid shipmentId, [FromForm] UploadDocumentRequest request)
     {
-        var orgId = GetOrgId();
-        var memberId = GetMemberId();
-        var role = GetRole();
+        var ctx = User.ToShipmentAccessContext();
         var file = request.File;
         var docType = request.DocType;
 
@@ -69,31 +71,20 @@ public class DocumentsController : ControllerBase
             return StatusCode(415, new { error = "UNSUPPORTED_FILE_TYPE", allowed = AllowedMimeTypes });
         }
 
-        //3. Find Shipment
-        var shipment = await appDb.Shipments.FirstOrDefaultAsync(s => s.Id == shipmentId && s.OrganisationId == orgId);
+        //3. Find shipment
+        var shipment = await appDb.Shipments.FirstOrDefaultAsync(s => s.Id == shipmentId && s.OrganisationId == ctx.OrgId);
         if (shipment == null) return NotFound(new { error = "SHIPMENT_NOT_FOUND" });
 
-        //4. ABAC- check uplaod permission
-        //Transporter: always allowed
-        //Fleet-owner: must be assigned to this shipment
-        //Driver: must be assigned to this shipment
-
-        if (role == "fleet_owner" && shipment.FleetOwnerMemberId != memberId)
-        {
+        //4. ABAC check
+        if (!policy.CanUploadDocument(ctx, shipment))
             return StatusCode(403, new { error = "FORBIDDEN" });
-        }
-        if (role == "driver" && shipment.DriverMemberId != memberId)
-        {
-            return StatusCode(403, new { error = "FORBIDDEN" });
-        }
 
-        //5 uplaod to storage
+        //5. Upload to storage
         var fileExtension = Path.GetExtension(file.FileName);
-        var storageKey = $"{orgId}/{shipmentId}/{Guid.NewGuid()}{fileExtension}";
+        var storageKey = $"{ctx.OrgId}/{shipmentId}/{Guid.NewGuid()}{fileExtension}";
 
         using var stream = file.OpenReadStream();
         await storageService.UploadAsync(storageKey, stream, file.ContentType);
-
 
         //6. Save metadata to DB
         var document = new ShipmentDocument
@@ -102,23 +93,23 @@ public class DocumentsController : ControllerBase
             DocType = docType,
             StorageKey = storageKey,
             OriginalFileName = file.FileName,
-
             FileSizeBytes = (int)file.Length,
             MimeType = file.ContentType,
-            UploadedByMemberId = memberId,
-            UploaderRole = role
+            UploadedByMemberId = ctx.MemberId,
+            UploaderRole = ctx.Role
         };
 
         appDb.ShipmentDocuments.Add(document);
         var previousStatus = shipment.Status;
 
-        //7. Auto-advance status to pod_uploaded if pod is uplaoded
+        //7. Auto-advance status to pod_uploaded if POD is uploaded
         if (docType == "pod" && (shipment.Status == "created" || shipment.Status == "assigned"))
             shipment.Status = "pod_uploaded";
 
         shipment.UpdatedAt = DateTime.UtcNow;
+
         await eventService.LogAsync(
-            shipment.Id, ShipmentEventType.DocumentUploaded, memberId, role,
+            shipment.Id, ShipmentEventType.DocumentUploaded, ctx.MemberId, ctx.Role,
             new
             {
                 doc_id = document.Id,
@@ -130,7 +121,7 @@ public class DocumentsController : ControllerBase
         if (previousStatus != shipment.Status)
         {
             await eventService.LogAsync(
-                shipment.Id, ShipmentEventType.StatusChanged, memberId, role,
+                shipment.Id, ShipmentEventType.StatusChanged, ctx.MemberId, ctx.Role,
                 new { from = previousStatus, to = shipment.Status, trigger = "pod_uploaded" });
         }
         await appDb.SaveChangesAsync();
@@ -150,19 +141,13 @@ public class DocumentsController : ControllerBase
     [HttpGet]
     public async Task<IActionResult> ListDocuments(Guid shipmentId)
     {
-        var orgId = GetOrgId();
-        var memberId = GetMemberId();
-        var role = GetRole();
+        var ctx = User.ToShipmentAccessContext();
 
-        var shipment = await appDb.Shipments.FirstOrDefaultAsync(s => s.Id == shipmentId && s.OrganisationId == orgId);
+        var shipment = await appDb.Shipments.FirstOrDefaultAsync(s => s.Id == shipmentId && s.OrganisationId == ctx.OrgId);
         if (shipment == null) return NotFound(new { error = "SHIPMENT_NOT_FOUND" });
 
-        //Role-based access
-
-        if (role == "fleet_owner" && shipment.FleetOwnerMemberId != memberId)
-            return StatusCode(403, new { error = "FORBIDDEN" });
-
-        if (role == "driver" && shipment.DriverMemberId != memberId)
+        // Document listing follows the same visibility rules as the shipment itself.
+        if (!policy.CanView(ctx, shipment))
             return StatusCode(403, new { error = "FORBIDDEN" });
 
         var documents = await appDb.ShipmentDocuments
@@ -185,29 +170,25 @@ public class DocumentsController : ControllerBase
     [HttpDelete("{docId}")]
     public async Task<IActionResult> DeleteDocument(Guid shipmentId, Guid docId)
     {
-        var orgId = GetOrgId();
-        var role = GetRole();
-        var memberId = GetMemberId();
+        var ctx = User.ToShipmentAccessContext();
 
-        //only transporters can delete
-        if (role != "transporter") return StatusCode(403, new { error = "FORBIDDEN" });
-
-        var shipment = await appDb.Shipments.FirstOrDefaultAsync(s => s.Id == shipmentId && s.OrganisationId == orgId);
-
+        var shipment = await appDb.Shipments.FirstOrDefaultAsync(s => s.Id == shipmentId && s.OrganisationId == ctx.OrgId);
         if (shipment == null) return NotFound(new { error = "SHIPMENT_NOT_FOUND" });
 
-        var document = await appDb.ShipmentDocuments.FirstOrDefaultAsync(d => d.Id == docId && d.ShipmentId == shipmentId && !d.IsDeleted);
+        if (!policy.CanDeleteDocument(ctx, shipment))
+            return StatusCode(403, new { error = "FORBIDDEN" });
 
+        var document = await appDb.ShipmentDocuments.FirstOrDefaultAsync(d => d.Id == docId && d.ShipmentId == shipmentId && !d.IsDeleted);
         if (document == null) return NotFound(new { error = "DOCUMENT_NOT_FOUND" });
 
         //soft delete - don't remove from storage
         document.IsDeleted = true;
+
         await eventService.LogAsync(
-            shipment.Id, ShipmentEventType.DocumentDeleted, memberId, role,
+            shipment.Id, ShipmentEventType.DocumentDeleted, ctx.MemberId, ctx.Role,
             new { doc_id = document.Id, doc_type = document.DocType });
         await appDb.SaveChangesAsync();
 
         return Ok(new { message = "Document deleted" });
     }
-
 }
