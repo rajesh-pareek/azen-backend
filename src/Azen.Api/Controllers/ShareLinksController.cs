@@ -15,11 +15,13 @@ public class ShareLinksController : ControllerBase
 {
     private readonly AppDbContext appDb;
     private readonly IStorageService storageService;
+    private readonly IShipmentEventService eventService;
 
-    public ShareLinksController(AppDbContext appDb, IStorageService storageService)
+    public ShareLinksController(AppDbContext appDb, IStorageService storageService, IShipmentEventService eventService)
     {
         this.appDb = appDb;
         this.storageService = storageService;
+        this.eventService = eventService;
     }
 
     private Guid GetOrgId() => Guid.Parse(User.FindFirst("orgId")!.Value);
@@ -68,12 +70,29 @@ public class ShareLinksController : ControllerBase
         };
 
         appDb.ShareLinks.Add(shareLink);
+        var previousStatus = shipment.Status;
         //auto-advance status to shared
 
         if (shipment.Status == "pod_uploaded")
             shipment.Status = "shared";
 
         shipment.UpdatedAt = DateTime.UtcNow;
+        // EVENT(S)
+        await eventService.LogAsync(
+            shipment.Id, ShipmentEventType.ShareLinkGenerated, memberId, role,
+            new
+            {
+                link_id = shareLink.Id,
+                visible_doc_types = request.VisibleDocTypes,
+                expires_at = shareLink.ExpiresAt
+            });
+
+        if (previousStatus != shipment.Status)
+        {
+            await eventService.LogAsync(
+                shipment.Id, ShipmentEventType.StatusChanged, memberId, role,
+                new { from = previousStatus, to = shipment.Status, trigger = "share_link_generated" });
+        }
         await appDb.SaveChangesAsync();
 
         return Created("", new
@@ -123,6 +142,7 @@ public class ShareLinksController : ControllerBase
     {
         var orgId = GetOrgId();
         var role = GetRole();
+        var memberId = GetMemberId();
 
         if (role != "transporter")
             return StatusCode(403, new { error = "FORBIDDEN" });
@@ -133,6 +153,11 @@ public class ShareLinksController : ControllerBase
 
         if (link == null) return NotFound(new { error = "LINK_NOT_FOUND" });
         link.IsRevoked = true;
+        // EVENT
+        await eventService.LogAsync(
+            link.ShipmentId, ShipmentEventType.ShareLinkRevoked, memberId, role,
+            new { link_id = link.Id, token = link.Token });
+
         await appDb.SaveChangesAsync();
         return Ok(new { message = "Share link revoked" });
     }

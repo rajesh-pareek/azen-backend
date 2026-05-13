@@ -28,8 +28,8 @@ public static class DependencyInjection
         services.AddScoped<IOtpService, OtpService>();
         services.AddScoped<IJwtService, JwtService>();
         services.AddScoped<IShipmentRefService, ShipmentRefService>();
+        services.AddScoped<IShipmentEventService, ShipmentEventService>();
         services.AddSingleton<IStorageService, S3StorageService>();
-
         return services;
     }
 }

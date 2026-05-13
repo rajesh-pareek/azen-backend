@@ -15,11 +15,13 @@ public class DocumentsController : ControllerBase
 {
     private readonly AppDbContext appDb;
     private readonly IStorageService storageService;
+    private readonly IShipmentEventService eventService;
 
-    public DocumentsController(AppDbContext appDb, IStorageService storageService)
+    public DocumentsController(AppDbContext appDb, IStorageService storageService, IShipmentEventService eventService)
     {
         this.appDb = appDb;
         this.storageService = storageService;
+        this.eventService = eventService;
     }
 
     private Guid GetOrgId() => Guid.Parse(User.FindFirst("orgId")!.Value);
@@ -108,12 +110,29 @@ public class DocumentsController : ControllerBase
         };
 
         appDb.ShipmentDocuments.Add(document);
+        var previousStatus = shipment.Status;
 
         //7. Auto-advance status to pod_uploaded if pod is uplaoded
         if (docType == "pod" && (shipment.Status == "created" || shipment.Status == "assigned"))
             shipment.Status = "pod_uploaded";
 
         shipment.UpdatedAt = DateTime.UtcNow;
+        await eventService.LogAsync(
+            shipment.Id, ShipmentEventType.DocumentUploaded, memberId, role,
+            new
+            {
+                doc_id = document.Id,
+                doc_type = document.DocType,
+                filename = document.OriginalFileName,
+                file_size_bytes = document.FileSizeBytes
+            });
+
+        if (previousStatus != shipment.Status)
+        {
+            await eventService.LogAsync(
+                shipment.Id, ShipmentEventType.StatusChanged, memberId, role,
+                new { from = previousStatus, to = shipment.Status, trigger = "pod_uploaded" });
+        }
         await appDb.SaveChangesAsync();
 
         return Created("", new
@@ -168,6 +187,7 @@ public class DocumentsController : ControllerBase
     {
         var orgId = GetOrgId();
         var role = GetRole();
+        var memberId = GetMemberId();
 
         //only transporters can delete
         if (role != "transporter") return StatusCode(403, new { error = "FORBIDDEN" });
@@ -182,6 +202,9 @@ public class DocumentsController : ControllerBase
 
         //soft delete - don't remove from storage
         document.IsDeleted = true;
+        await eventService.LogAsync(
+            shipment.Id, ShipmentEventType.DocumentDeleted, memberId, role,
+            new { doc_id = document.Id, doc_type = document.DocType });
         await appDb.SaveChangesAsync();
 
         return Ok(new { message = "Document deleted" });

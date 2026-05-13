@@ -16,12 +16,14 @@ public class ShipmentsController : ControllerBase
     private readonly AuthDbContext authDb;
     private readonly AppDbContext appDb;
     private readonly IShipmentRefService refService;
+    private readonly IShipmentEventService eventService;
 
-    public ShipmentsController(AuthDbContext authDb, AppDbContext appDb, IShipmentRefService refService)
+    public ShipmentsController(AuthDbContext authDb, AppDbContext appDb, IShipmentRefService refService, IShipmentEventService eventService)
     {
         this.authDb = authDb;
         this.appDb = appDb;
         this.refService = refService;
+        this.eventService = eventService;
     }
 
     //extrat jwt claims
@@ -70,6 +72,9 @@ public class ShipmentsController : ControllerBase
         };
 
         appDb.Shipments.Add(shipment);
+
+        await eventService.LogAsync(shipment.Id, ShipmentEventType.ShipmentCreated, memberId, role,
+        new { reference_number = shipment.ReferenceNumber });
         await appDb.SaveChangesAsync();
 
         return Created("", new
@@ -173,21 +178,24 @@ public class ShipmentsController : ControllerBase
         if (shipment == null)
             return NotFound(new { error = "SHIPMENT_NOT_FOUND" });
 
+        var oldVehicleNumber = shipment.VehicleNumber;
+        var changedFields = new List<string>();
+
         //transporter can edit all fields; fleet owner can edit vehicle n umber and notes only
         if (role == "transporter")
         {
-            if (request.ConsignorName != null) shipment.ConsignorName = request.ConsignorName;
-            if (request.ConsignorPhone != null) shipment.ConsignorPhone = request.ConsignorPhone;
-            if (request.ConsigneeName != null) shipment.ConsigneeName = request.ConsigneeName;
-            if (request.ConsigneePhone != null) shipment.ConsigneePhone = request.ConsigneePhone;
-            if (request.GoodsDescription != null) shipment.GoodsDescription = request.GoodsDescription;
-            if (request.VehicleNumber != null) shipment.VehicleNumber = request.VehicleNumber;
-            if (request.Notes != null) shipment.Notes = request.Notes;
+            if (request.ConsignorName != null) { shipment.ConsignorName = request.ConsignorName; changedFields.Add("consignor_name"); }
+            if (request.ConsignorPhone != null) { shipment.ConsignorPhone = request.ConsignorPhone; changedFields.Add("consignor_phone"); }
+            if (request.ConsigneeName != null) { shipment.ConsigneeName = request.ConsigneeName; changedFields.Add("consignee_name"); }
+            if (request.ConsigneePhone != null) { shipment.ConsigneePhone = request.ConsigneePhone; changedFields.Add("consignee_phone"); }
+            if (request.GoodsDescription != null) { shipment.GoodsDescription = request.GoodsDescription; changedFields.Add("goods_description"); }
+            if (request.VehicleNumber != null) { shipment.VehicleNumber = request.VehicleNumber; changedFields.Add("vehicle_number"); }
+            if (request.Notes != null) { shipment.Notes = request.Notes; changedFields.Add("notes"); }
         }
         else if (role == "fleet_owner" && shipment.FleetOwnerMemberId == memberId)
         {
-            if (request.VehicleNumber != null) shipment.VehicleNumber = request.VehicleNumber;
-            if (request.Notes != null) shipment.Notes = request.Notes;
+            if (request.VehicleNumber != null) { shipment.VehicleNumber = request.VehicleNumber; changedFields.Add("vehicle_number"); }
+            if (request.Notes != null) { shipment.Notes = request.Notes; changedFields.Add("notes"); }
         }
         else
         {
@@ -195,6 +203,25 @@ public class ShipmentsController : ControllerBase
         }
 
         shipment.UpdatedAt = DateTime.UtcNow;
+
+        if (changedFields.Contains("vehicle_number"))
+        {
+            await eventService.LogAsync(shipment.Id, ShipmentEventType.VehicleUpdated, memberId, role,
+            new { from = oldVehicleNumber, to = shipment.VehicleNumber });
+        }
+
+        //log meta data update if anything other than vehicle numbe  is changed
+
+        var nonVehicleChanges = changedFields.Where(f => f != "vehicle_number").ToList();
+
+        if (nonVehicleChanges.Count > 0)
+        {
+            await eventService.LogAsync(shipment.Id, ShipmentEventType.MetadataUpdated, memberId, role,
+            new
+            {
+                fields = nonVehicleChanges
+            });
+        }
         await appDb.SaveChangesAsync();
         return Ok(new { message = "Shipment_Updated" });
     }
@@ -204,6 +231,7 @@ public class ShipmentsController : ControllerBase
     {
         var orgId = GetOrgId();
         var role = GetRole();
+        var memberId = GetMemberId();
 
         if (role != "transporter")
             return StatusCode(403, new { error = "FORBIDDEN" });
@@ -212,6 +240,9 @@ public class ShipmentsController : ControllerBase
 
         if (shipment == null)
             return NotFound(new { error = "SHIPMENT_NOT_FOUND" });
+
+        var wasAlreadyAssigned = shipment.FleetOwnerMemberId != null || !string.IsNullOrEmpty(shipment.FleetOwnerName);
+        var previousStatus = shipment.Status;
 
         if (request.MemberId != null)
         {
@@ -245,6 +276,27 @@ public class ShipmentsController : ControllerBase
             shipment.Status = "assigned";
 
         shipment.UpdatedAt = DateTime.UtcNow;
+
+        var assignmentType = wasAlreadyAssigned ? ShipmentEventType.FleetOwnerReassigned : ShipmentEventType.FleetOwnerAssigned;
+        await eventService.LogAsync(shipment.Id, assignmentType, memberId, role,
+        new
+        {
+            in_system = shipment.FleetOwnerInSystem,
+            member_id = shipment.FleetOwnerMemberId,
+            name = shipment.FleetOwnerName
+        });
+
+        if (previousStatus != shipment.Status)
+        {
+            await eventService.LogAsync(shipment.Id, ShipmentEventType.StatusChanged, memberId, role,
+            new
+            {
+                from = previousStatus,
+                to = shipment.Status,
+                trigger = "fleet_owner_assigned"
+            });
+        }
+
         await appDb.SaveChangesAsync();
         return Ok(new
         {
@@ -266,6 +318,11 @@ public class ShipmentsController : ControllerBase
         var shipment = await appDb.Shipments.FirstOrDefaultAsync(s => s.Id == id && s.OrganisationId == orgId);
         if (shipment == null)
             return NotFound(new { error = "SHIPMENT_NOT_FOUND" });
+
+        var wasAlreadyAssigned = shipment.DriverMemberId != null || !string.IsNullOrEmpty(shipment.DriverName);
+        var previousStatus = shipment.Status;
+        var oldVehicleNumber = shipment.VehicleNumber;
+
 
         if (role == "fleet_owner" && shipment.FleetOwnerMemberId != memberId)
         {
@@ -299,10 +356,49 @@ public class ShipmentsController : ControllerBase
             return BadRequest(new { error = "INVALID_REQUEST", message = "Provide either memberId or name + Phone." });
         }
 
-        if (request.VehicleNumber != null)
+
+
+        var vehicleChanged = false;
+        if (request.VehicleNumber != null && request.VehicleNumber != oldVehicleNumber)
+        {
             shipment.VehicleNumber = request.VehicleNumber;
+            vehicleChanged = true;
+        }
+
+        // auto-advance: design allows status to flow on assignment
+        if (shipment.Status == "created")
+            shipment.Status = "assigned";
 
         shipment.UpdatedAt = DateTime.UtcNow;
+
+        // EVENT(S)
+        var assignmentType = wasAlreadyAssigned
+            ? ShipmentEventType.DriverReassigned
+            : ShipmentEventType.DriverAssigned;
+        await eventService.LogAsync(
+            shipment.Id, assignmentType, memberId, role,
+            new
+            {
+                in_system = shipment.DriverInSystem,
+                member_id = shipment.DriverMemberId,
+                name = shipment.DriverName
+            });
+
+        if (vehicleChanged)
+        {
+            await eventService.LogAsync(
+                shipment.Id, ShipmentEventType.VehicleUpdated, memberId, role,
+                new { from = oldVehicleNumber, to = shipment.VehicleNumber });
+        }
+
+        if (previousStatus != shipment.Status)
+        {
+            await eventService.LogAsync(
+                shipment.Id, ShipmentEventType.StatusChanged, memberId, role,
+                new { from = previousStatus, to = shipment.Status, trigger = "driver_assigned" });
+        }
+
+
         await appDb.SaveChangesAsync();
 
         return Ok(new
@@ -320,6 +416,7 @@ public class ShipmentsController : ControllerBase
     {
         var orgId = GetOrgId();
         var role = GetRole();
+        var memberId = GetMemberId();
 
         //only transporters can manually advance status
         if (role != "transporter")
@@ -349,8 +446,14 @@ public class ShipmentsController : ControllerBase
             });
         }
 
+        var previousStatus = shipment.Status;
         shipment.Status = request.Status;
         shipment.UpdatedAt = DateTime.UtcNow;
+
+        await eventService.LogAsync(
+            shipment.Id, ShipmentEventType.StatusChanged, memberId, role,
+            new { from = previousStatus, to = shipment.Status, trigger = "manual" });
+
         await appDb.SaveChangesAsync();
 
         return Ok(new
@@ -359,4 +462,39 @@ public class ShipmentsController : ControllerBase
             status = shipment.Status
         });
     }
+
+    // NEW: audit trail read endpoint
+    [HttpGet("{id}/events")]
+    public async Task<IActionResult> GetShipmentEvents(Guid id)
+    {
+        var orgId = GetOrgId();
+        var role = GetRole();
+
+        // Audit trail is transporter-only (per mvp-design §7.3 / §8 implicit)
+        if (role != "transporter")
+            return StatusCode(403, new { error = "FORBIDDEN" });
+
+        var shipment = await appDb.Shipments
+            .AsNoTracking()
+            .FirstOrDefaultAsync(s => s.Id == id && s.OrganisationId == orgId);
+        if (shipment == null) return NotFound(new { error = "SHIPMENT_NOT_FOUND" });
+
+        var events = await appDb.ShipmentEvents
+            .AsNoTracking()
+            .Where(e => e.ShipmentId == id)
+            .OrderByDescending(e => e.CreatedAt)
+            .Select(e => new
+            {
+                id = e.Id,
+                event_type = e.EventType,
+                actor_id = e.ActorId,
+                actor_role = e.ActorRole,
+                payload = e.Payload, // raw JSON string; client parses
+                created_at = e.CreatedAt
+            })
+            .ToListAsync();
+
+        return Ok(events);
+    }
+
 }
