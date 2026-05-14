@@ -1,4 +1,4 @@
-namespace Azen.Application.DTOs;
+namespace Azen.Application.DTOs.Auth;
 
 public class RefreshTokenRequest
 {

@@ -1,0 +1,96 @@
+# Docker Compose for local development.
+# Brings up three services on an isolated network:
+#   db    - SQL Server 2019 (data store)
+#   minio - S3-compatible object storage (document uploads)
+#   api   - this backend, built from the local Dockerfile
+#
+# Usage:
+#   docker compose up        # foreground (logs visible)
+#   docker compose up -d     # background
+#   docker compose down      # stop + remove containers (keeps volumes)
+#   docker compose down -v   # also wipes the DB and MinIO data volumes
+#
+# Required: a .env file in this directory (copy .env.example).
+
+services:
+
+  # ----------------------------------------------------------------------
+  # SQL Server 2019
+  # platform: linux/amd64 because MS doesn't publish an ARM build of 2019.
+  # On Apple Silicon it runs under emulation - slower than native, but works.
+  # Exposed on host port 1434 to avoid colliding with any local SQL Server
+  # you already have running on 1433.
+  # ----------------------------------------------------------------------
+  db:
+    image: mcr.microsoft.com/mssql/server:2019-latest
+    platform: linux/amd64
+    container_name: azen-db
+    environment:
+      - ACCEPT_EULA=Y
+      - MSSQL_SA_PASSWORD=${SA_PASSWORD}
+      - MSSQL_PID=Developer
+    ports:
+      - "1434:1433"
+    volumes:
+      - mssql_data:/var/opt/mssql
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/mssql-tools/bin/sqlcmd -S localhost -U sa -P \"$$MSSQL_SA_PASSWORD\" -Q 'SELECT 1' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  # ----------------------------------------------------------------------
+  # MinIO - S3-compatible local object storage.
+  # Your IStorageService points at this for document uploads in dev.
+  # Console UI lives on port 9001, S3 API on 9000.
+  # ----------------------------------------------------------------------
+  minio:
+    image: minio/minio:latest
+    container_name: azen-minio
+    command: server /data --console-address ":9001"
+    environment:
+      - MINIO_ROOT_USER=${MINIO_ACCESS_KEY}
+      - MINIO_ROOT_PASSWORD=${MINIO_SECRET_KEY}
+    ports:
+      - "9000:9000"   # S3 API
+      - "9001:9001"   # Web console
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ----------------------------------------------------------------------
+  # The API itself - built from ./Dockerfile.
+  # Connection strings use 'db' (the compose service name), not 'localhost'.
+  # Inside this container, localhost = the container itself, not your Mac.
+  # ----------------------------------------------------------------------
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: azen-api
+    depends_on:
+      db:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    environment:
+      - ASPNETCORE_ENVIRONMENT=Development
+      - ConnectionStrings__AuthDb=Server=db,1433;Database=AzenAuthDb;User Id=sa;Password=${SA_PASSWORD};TrustServerCertificate=True;
+      - ConnectionStrings__AppDb=Server=db,1433;Database=AzenAppDb;User Id=sa;Password=${SA_PASSWORD};TrustServerCertificate=True;
+      - Storage__Endpoint=http://minio:9000
+      - Storage__AccessKey=${MINIO_ACCESS_KEY}
+      - Storage__SecretKey=${MINIO_SECRET_KEY}
+      - Storage__BucketName=azen-documents
+      - Storage__UseSSL=false
+      - Jwt__Secret=${JWT_SECRET}
+    ports:
+      - "5000:8080"   # host:container - hit http://localhost:5000
+
+volumes:
+  mssql_data:
+  minio_data:

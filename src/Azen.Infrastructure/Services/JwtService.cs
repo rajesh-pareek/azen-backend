@@ -31,7 +31,7 @@ public class JwtService : IJwtService
             new Claim("sub",userId.ToString()),
             new Claim("orgId",ordId.ToString()),
             new Claim("member_id", memberId.ToString()),
-            new Claim("role",role),
+            new Claim("user_role",role),
             new Claim("sub_role",subRole)
         };
 

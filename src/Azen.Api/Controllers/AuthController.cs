@@ -1,12 +1,10 @@
 using System.Security.Cryptography;
 using System.Text;
-using Azen.Application.DTOs;
 using Azen.Application.DTOs.Auth;
 using Azen.Application.Interfaces;
 using Azen.Domain.Entities.Auth;
 using Azen.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.AspNetCore.Mvc.ActionConstraints;
 using Microsoft.EntityFrameworkCore;
 [ApiController]
 [Route("api/v1/[controller]")]
@@ -16,13 +14,15 @@ public class AuthController : ControllerBase
     private readonly IJwtService jwtService;
     private readonly AuthDbContext authDb;
     private readonly IConfiguration config;
+    private readonly AppDbContext appDb;
 
-    public AuthController(IOtpService otpService, IJwtService jwtService, AuthDbContext authDb, IConfiguration config)
+    public AuthController(IOtpService otpService, IJwtService jwtService, AuthDbContext authDb, IConfiguration config, AppDbContext appDb)
     {
         this.otpService = otpService;
         this.jwtService = jwtService;
         this.authDb = authDb;
         this.config = config;
+        this.appDb = appDb;
     }
 
     [HttpPost("otp/send")]
@@ -38,7 +38,7 @@ public class AuthController : ControllerBase
         var authCode = await otpService.VerifyOtpAsync(request.Phone, request.Otp);
         if (authCode == null) return Unauthorized(new { error = "INVALID_OTP" });
 
-        var user = authDb.Users.FirstOrDefault(u => u.Phone == request.Phone);
+        var user = await authDb.Users.FirstOrDefaultAsync(u => u.Phone == request.Phone);
         if (user == null)
         {
             user = new User
@@ -49,11 +49,19 @@ public class AuthController : ControllerBase
             await authDb.SaveChangesAsync();
         }
 
+        var memberships = await appDb.OrganisationMembers
+        .Where(m => m.UserId == user.Id)
+        .Join(appDb.Organisations,
+        m => m.OrganisationId,
+        o => o.Id,
+        (m, o) => new { org_id = o.Id, name = o.Name, slug = o.Slug, role = m.Role })
+        .ToListAsync();
+
         return Ok(new
         {
             auth_code = authCode,
-            user = new { Id = user.Id, name = user.Name, email = user.Email },
-            organisations = new List<object>() //empty for now since AppDb will be setup later });
+            user = new { id = user.Id, name = user.Name, email = user.Email },
+            organisations = memberships
 
         });
     }
@@ -96,31 +104,12 @@ public class AuthController : ControllerBase
 
         if (user == null) return NotFound(new { error = "USER_NOT_FOUND" });
 
-        // Generate Access Tokens
-        //To Do: Replace Dummy Values With Real Org Lookup once AppDb is setup
-        /* var accessToken = jwtService.GenerateAccessToken(
-            userId: user.Id,
-            orgId: request.OrgId,
-            memberId: Guid.Empty, //placeholder until appdb
-            role: "transporter",
-            subRole: "member"
-        ); */
-
-        /* var refreshToken = jwtService.GenerateRefreshToken();
-        //Hash and store refresh token
-        var refreshTokenHash = Convert.ToBase64String(SHA256.HashData(Encoding.UTF8.GetBytes(refreshToken)));
-
-        var refreshTokenEntity = new RefreshToken
+        var member = await appDb.OrganisationMembers.FirstOrDefaultAsync(m => m.UserId == user.Id && m.OrganisationId == request.OrgId && m.IsActive);
+        if (member == null)
         {
-            UserId = user.Id,
-            OrgId = request.OrgId,
-            TokenHash = refreshTokenHash,
-            ExpiresAt = DateTime.UtcNow.AddDays(int.Parse(config["Jwt:RefreshTokenExpiryDays"]!)),
-        }; */
-
-        /*  authDb.RefreshTokens.Add(refreshTokenEntity);
-         await authDb.SaveChangesAsync(); */
-        var tokens = await GenerateTokenPair(user, request.OrgId, Guid.Empty, "trasporter", "member");
+            return StatusCode(403, new { error = "NOT_A_MEMBER", message = "You are not a member of this organisation" });
+        }
+        var tokens = await GenerateTokenPair(user, request.OrgId, member.Id, member.Role, member.SubRole);
         return Ok(tokens);
     }
 
@@ -136,7 +125,15 @@ public class AuthController : ControllerBase
         var user = await authDb.Users.FindAsync(existingToken.UserId);
         if (user == null) return NotFound(new { error = "USER_NOT_FOUND" });
 
-        var tokens = await GenerateTokenPair(user, existingToken.OrgId, Guid.Empty, "transporter", "member");
+        //Look up membership in appDb
+
+        var member = await appDb.OrganisationMembers.FirstOrDefaultAsync(m => m.UserId == user.Id && m.OrganisationId == existingToken.OrgId && m.IsActive);
+        if (member == null)
+        {
+            return StatusCode(403, new { error = "NOT_A_MEMBER", message = "You are not a member of this organisation" });
+        }
+
+        var tokens = await GenerateTokenPair(user, existingToken.OrgId, member.Id, member.Role, member.SubRole);
 
         return Ok(tokens);
     }

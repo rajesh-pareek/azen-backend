@@ -1,233 +1,274 @@
 # Azen Backend API
 
-Azen is a mobile-first logistics coordination platform designed to replace unstructured WhatsApp-based shipment workflows with a structured and traceable system.
+> **Internal project.** Confidential — not for external distribution.
 
-This repository contains the backend API responsible for shipment lifecycle management, Proof-of-Delivery (POD) handling, and secure document sharing.
+Azen is a logistics coordination platform built to replace WhatsApp-based shipment workflows with structured, traceable, document-driven operations.
 
----
-
-## Problem
-
-Current logistics workflows rely heavily on:
-
-- WhatsApp chats
-- Phone calls
-- Manual document sharing
-
-This leads to:
-
-- Poor traceability
-- Lost POD documents
-- No structured shipment tracking
-
-Azen introduces a system that is faster and more reliable than existing manual workflows.
+This repository is the .NET 8 Web API that powers the mobile and web clients.
 
 ---
 
-## MVP Scope
+## Tech stack
 
-- Shipment creation and assignment
-- Driver-based POD upload
-- Shareable POD links for external stakeholders
-- Minimal and fast workflows
-- Reduced reliance on WhatsApp
+- **.NET 8** Web API (Clean Architecture: Api / Application / Domain / Infrastructure)
+- **MSSQL Server 2019** — two databases: `AzenAuthDb` (identity) and `AzenAppDb` (business data)
+- **Entity Framework Core** for persistence and migrations
+- **MinIO** (S3-compatible) for document storage in local/dev environments
+- **JWT + phone OTP** authentication
+- **Docker / Docker Compose** for containerised dev and deployment
 
----
-
-## Architecture Overview
-
-```
-Mobile App
-   ↓
-REST API (.NET Web API)
-   ↓
-Auth DB (Users, OTP)
-   +
-App DB (Shipments, Documents)
-   ↓
-Cloud Storage (POD files)
-```
+The full design is documented in [`docs/design/mvp-design.md`](docs/design/mvp-design.md). Read that first if you want the why behind the code.
 
 ---
 
-## Authentication
+## Prerequisites
 
-- Phone number based login
-- OTP verification
-- JWT-based session handling
+You can run the project in two ways. Pick one.
 
-Authentication is isolated from business data using a dedicated Auth database.
+**Option A — Docker (recommended for new devs).** You only need:
 
----
+- Docker Desktop (Mac, Windows, or Linux)
 
-## Database Design
+**Option B — Native.** You need:
 
-### Auth Database
-
-Responsible for identity and authentication:
-
-- Users
-- OTP logs
-
-### App Database
-
-Responsible for business data:
-
-- Organisations
-- Organisation members
-- Shipments
-- Shipment documents (POD)
-- Share links
-- Shipment events
+- .NET 8 SDK
+- SQL Server 2019 (or Azure SQL Edge on Apple Silicon)
+- MinIO running locally (or any S3-compatible storage)
+- `dotnet-ef` global tool: `dotnet tool install --global dotnet-ef`
 
 ---
 
-## Shipment Lifecycle
+## Quick start — Docker
 
-```
-Created
-→ Assigned
-→ Driver Assigned
-→ POD Uploaded
-→ Shared
+This brings up the API, SQL Server, and MinIO together as a connected stack.
+
+```bash
+# 1. Clone
+git clone <repo-url>
+cd azen-backend
+
+# 2. Create your .env from the template
+cp .env.example .env
+# Edit .env and set SA_PASSWORD and JWT_SECRET to real values.
+
+# 3. Start the stack
+docker compose up
 ```
 
-State transitions are strictly forward-only.
-
----
-
-## User Roles
-
-### Transporter
-
-- Creates shipments
-- Assigns truckers
-- Shares POD links
-
-### Trucker
-
-- Assigns drivers
-- Adds vehicle details
-
-### Driver
-
-- Views assigned shipments
-- Uploads POD
-
-### Broker / Shipper
-
-- Access via secure link
-- View and download POD
-- No authentication required
-
----
-
-## Project Structure
+That's it. After ~30 seconds (SQL Server takes a moment to warm up), the API is reachable at:
 
 ```
-src/
-  Azen.Api            Entry point (controllers, configuration)
-  Azen.Application    Business logic (use cases, interfaces)
-  Azen.Domain         Core domain models (entities, enums)
-  Azen.Infrastructure Persistence and external integrations
-
-docs/
-  architecture/       System design documents
-  srs/                Product requirements
-  links/              External resources
+http://localhost:5000/swagger
 ```
+
+Database migrations apply automatically on first startup in development mode.
+
+To stop:
+
+```bash
+docker compose down        # stops containers, keeps the data volumes
+docker compose down -v     # also wipes the DB and storage (fresh start)
+```
+
+### What ports run where
+
+| Service | Host port | Notes |
+|---|---|---|
+| API | `5000` | Hit `http://localhost:5000/swagger` |
+| SQL Server | `1434` | Avoids the default `1433` so you don't collide with a local SQL install |
+| MinIO S3 API | `9000` | Programmatic uploads |
+| MinIO console | `9001` | Web UI at `http://localhost:9001` to inspect uploaded files |
 
 ---
 
-## Tech Stack
+## Quick start — Native
 
-- .NET 8 Web API
-- Entity Framework Core
-- MySQL
-- JWT authentication
-- OTP-based login
-- Azure (planned)
-- Cloud storage for documents
+For devs who prefer to run the app directly on their machine.
+
+```bash
+# 1. Clone
+git clone <repo-url>
+cd azen-backend
+
+# 2. Make sure your local SQL Server is running and reachable on
+#    Server=localhost,1433  (see appsettings.Development.json)
+
+# 3. Make sure your local MinIO is running on http://localhost:9000
+
+# 4. Restore + run
+dotnet restore
+dotnet run --project src/Azen.Api
+```
+
+The API binds to a local port shown in the console output (typically `https://localhost:7XXX`). Migrations apply on startup in Development mode.
+
+### Migrations on native dev
+
+Migrations run automatically on startup in Development. If you ever need to apply them manually (e.g. to a non-Development environment):
+
+```bash
+dotnet ef database update \
+  --project src/Azen.Infrastructure \
+  --startup-project src/Azen.Api \
+  --context AuthDbContext
+
+dotnet ef database update \
+  --project src/Azen.Infrastructure \
+  --startup-project src/Azen.Api \
+  --context AppDbContext
+```
+
+To add a new migration after changing entities:
+
+```bash
+dotnet ef migrations add <Name> \
+  --project src/Azen.Infrastructure \
+  --startup-project src/Azen.Api \
+  --context AppDbContext     # or AuthDbContext
+```
 
 ---
 
 ## Configuration
 
-Configuration is managed via:
+All runtime config lives in `appsettings.json` and `appsettings.Development.json`. Environment variables override either at runtime — that's how `docker-compose.yml` injects connection strings without baking them into the image.
+
+The key sections:
+
+**`ConnectionStrings`** — separate strings for `AuthDb` and `AppDb`.
+
+**`Jwt`** — token signing secret, issuer, audience, expiry windows.
+
+**`FeatureFlags.UseRealSMS`** — `false` uses the console SMS service (prints OTPs to logs in dev). `true` calls a real SMS provider via `RealSmsService`.
+
+**`SmsProvider.ApiKey`** — the API key for the real SMS provider when the flag is on.
+
+**`Storage`** — MinIO / S3 endpoint, credentials, bucket name.
+
+**`Cors.AllowedOrigins`** — array of origins allowed to call the API. Empty by default in `appsettings.json` (locked-down for prod); populated with localhost ports in `appsettings.Development.json`. Add your frontend origin here.
+
+### Env var override syntax
+
+ASP.NET Core treats `__` (double underscore) as the section separator. Examples:
 
 ```
-appsettings.json
-appsettings.Development.json
+ConnectionStrings__AppDb       →  ConnectionStrings:AppDb
+Jwt__Secret                    →  Jwt:Secret
+Cors__AllowedOrigins__0        →  Cors:AllowedOrigins[0]
 ```
 
-Key sections:
-
-- ConnectionStrings (AuthDb, AppDb)
-- Jwt
-- Otp
-- Storage
-- ShareLinks
+Useful when overriding from `.env` or in a CI environment.
 
 ---
 
-## Running the Project
+## Authentication flow
 
-Clone the repository:
+Phone-OTP based, JWT-issued.
+
+```
+1. POST /auth/otp/send       → OTP delivered via SMS
+2. POST /auth/otp/verify     → returns auth_code + user + org list
+3a. POST /auth/token/issue   → exchange auth_code + org_id for JWT pair
+3b. POST /orgs               → create a new org (for first-time users)
+4. POST /auth/token/refresh  → rotate the token pair
+5. POST /auth/logout         → revoke refresh token
+```
+
+Detailed flow and JWT payload are in `docs/design/auth-flow-guide.md`.
+
+---
+
+## Roles and authorization
+
+Three internal roles: **transporter**, **fleet_owner**, **driver**. External actors (consignor, consignee) view shipments through anonymous share links.
+
+The full permission matrix lives in `mvp-design.md §8` and is implemented in `Azen.Infrastructure.Authorization.ShipmentAccessPolicy`. All controllers ask the policy — never check roles inline.
+
+The transporter has full override on their own org's shipments, which is the core flexibility rule.
+
+---
+
+## Project structure
+
+```
+src/
+  Azen.Api              HTTP entry point - controllers, middleware, Program.cs
+  Azen.Application      Use cases, interfaces, DTOs, ABAC policy contracts
+  Azen.Domain           Core entities and enums (no dependencies)
+  Azen.Infrastructure   EF Core, DbContexts, migrations, storage, JWT, policy impl
+
+docs/
+  design/               Architecture and design documents
+  srs/                  Product requirements
+  plan/                 Implementation tracking
+
+Dockerfile              Multi-stage build for the API image
+docker-compose.yml      Local dev stack: api + db + minio
+.env.example            Template for the .env you must create
+```
+
+---
+
+## Shipment lifecycle
+
+```
+created → assigned → pod_uploaded → shared
+```
+
+Transitions are forward-only. The `assigned` stage can be skipped when the transporter manages everything directly (flexible participation rule — see design §3).
+
+---
+
+## API documentation
+
+Swagger UI is enabled in Development at `/swagger`. JWT can be entered via the **Authorize** button in the top-right of the Swagger page; subsequent requests carry it as `Authorization: Bearer <token>`.
+
+---
+
+## Common dev tasks
+
+**Reset the local stack from scratch:**
 
 ```bash
-git clone <repo-url>
-cd azen-backend
+docker compose down -v
+docker compose up
 ```
 
-Run the API:
+**Tail just the API logs:**
 
 ```bash
-dotnet run --project src/Azen.Api
+docker compose logs -f api
 ```
 
-Test endpoints:
+**Open a SQL session against the containerised DB:**
 
-- `/api/v1/health`
-- `/swagger`
+```bash
+docker exec -it azen-db /opt/mssql-tools/bin/sqlcmd \
+  -S localhost -U sa -P "<your SA_PASSWORD>"
+```
 
----
+**Open MinIO console:**
 
-## Roadmap
+```
+http://localhost:9001
+```
 
-Phase 1.5:
-
-- AI-assisted shipment creation
-
-Phase 2:
-
-- WhatsApp bot integration
-
-Future:
-
-- Analytics
-- Multi-document workflows
-- Scalable database strategies
+Sign in with the `MINIO_ACCESS_KEY` / `MINIO_SECRET_KEY` from your `.env`.
 
 ---
 
-## Engineering Team
+## Team
 
-- Rajesh Pareek (rajeshpareekdevo@gmail.com) — Backend
-- Aditya (adityasharma7737pw@gmail.com) — Backend
-- Shivesh (shiveshtrivedi159@gmail.com) — Backend
-
----
-
-## Engineering Principles
-
-- Clean architecture
-- Separation of concerns
-- API-first design
-- Simplicity over premature optimization
-- Designed for scalability
+- Rajesh Pareek — backend
+- Aditya Sharma — backend
+- Shivesh Trivedi — backend
 
 ---
 
-## Notes
+## Internal notes
 
-Azen is built to bring structure and traceability to logistics workflows, replacing fragmented communication with a consistent system.
+- Real SMS provider integration is feature-flagged behind `FeatureFlags.UseRealSMS`. Keep it `false` in dev unless you're testing real delivery.
+- Production deployments do **not** auto-apply migrations — schema changes go through a CI/CD step. Auto-apply is dev-only.
+- This codebase is intended to stay closed-source. No public licence is granted.
+
+Detailed engineering plans live in `docs/plan/`. Start with `docs/plan/mvp-hardening-plan.md` for current open work.
