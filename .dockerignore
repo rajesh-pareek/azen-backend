@@ -1,0 +1,57 @@
+# Build outputs - generated, no reason to ship them into the image
+**/bin/
+**/obj/
+**/out/
+**/publish/
+**/TestResults/
+
+# IDE noise
+.vs/
+.vscode/
+.idea/
+*.user
+*.suo
+*.userprefs
+
+# Git history - huge, not needed at runtime
+.git/
+.gitignore
+.gitattributes
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Secrets - never bake these into images
+.env
+.env.local
+.env.*.local
+**/secrets.json
+**/appsettings.*.local.json
+
+# Local storage / uploads
+storage/
+**/storage/
+
+# Docs - shipped via the repo, not the image
+docs/
+README.md
+LICENSE
+*.md
+mvp-design.md
+mvp-implementation-plan.md
+mvp-srs.md
+
+# Stray scratch files
+script.cs
+script.js
+
+# Node / front-end stuff (if it ever lands here)
+node_modules/
+npm-debug.log
+yarn-error.log
+
+# Docker config itself - the image doesn't need its own recipe
+Dockerfile
+.dockerignore
+docker-compose*.yml
