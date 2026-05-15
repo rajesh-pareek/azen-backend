@@ -60,6 +60,7 @@ public class ShipmentsController : ControllerBase
 
         var shipment = new Shipment
         {
+            Id = Guid.NewGuid(),
             OrganisationId = ctx.OrgId,
             ReferenceNumber = refNumber,
             ConsignorName = request.ConsignorName,
@@ -102,9 +103,17 @@ public class ShipmentsController : ControllerBase
                reference_number = s.ReferenceNumber,
                status = s.Status,
                consignor_name = s.ConsignorName,
+               consignor_phone = s.ConsignorPhone,
                consignee_name = s.ConsigneeName,
+               consignee_phone = s.ConsigneePhone,
+               goods_description = s.GoodsDescription,
+               notes = s.Notes,
                fleet_owner_name = s.FleetOwnerName,
+               fleet_owner_phone = s.FleetOwnerPhone,
+               fleet_owner_in_system = s.FleetOwnerInSystem,
                driver_name = s.DriverName,
+               driver_phone = s.DriverPhone,
+               driver_in_system = s.DriverInSystem,
                vehicle_number = s.VehicleNumber,
                created_at = s.CreatedAt
            })
