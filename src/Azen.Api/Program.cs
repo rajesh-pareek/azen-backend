@@ -1,5 +1,6 @@
 using System.IdentityModel.Tokens.Jwt;
 using System.Reflection;
+using System.Text.Json;
 using Azen.Api.Filters;
 using Azen.Application.Validation.Auth;
 using Azen.Infrastructure;
@@ -16,6 +17,13 @@ builder.Services.AddControllers(opts =>
     // Runs FluentValidation on every action argument and converts failures
     // into the standard 400 error envelope.
     opts.Filters.Add<ValidateModelFilter>();
+}).AddJsonOptions(opts =>
+{
+    // Wire format is snake_case per mvp-design.md.
+    // Applies to both serialisation (response) and deserialisation (request).
+    opts.JsonSerializerOptions.PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower;
+    opts.JsonSerializerOptions.DictionaryKeyPolicy = JsonNamingPolicy.SnakeCaseLower;
+    opts.JsonSerializerOptions.PropertyNameCaseInsensitive = true;
 });
 builder.Services.AddInfrastructure(builder.Configuration);
 

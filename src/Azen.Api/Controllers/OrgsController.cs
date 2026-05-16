@@ -168,12 +168,17 @@ public class OrgsController : ControllerBase
         appDb.OrganisationMembers.Add(member);
         await appDb.SaveChangesAsync();
 
-        //7. Return
+        //7. Return - include full member shape so the UI can append it locally without refetching.
         return Created("", new
         {
             member_id = member.Id,
             user_id = user.Id,
+            name = user.Name,
+            phone = user.Phone,
             role = member.Role,
+            sub_role = member.SubRole,
+            is_active = member.IsActive,
+            joined_at = member.JoinedAt,
             is_new_user = isNewUser
         });
     }
@@ -207,23 +212,33 @@ public class OrgsController : ControllerBase
     {
         var orgId = Guid.Parse(User.FindFirst("orgId")!.Value);
         var callerRole = User.FindFirst("user_role")!.Value;
-        //only transporters can see full member list, member name is not present in system, need to look it up from auth/identity db
         if (callerRole != "transporter")
             return StatusCode(403, new { error = "FORBIDDEN" });
 
         var members = await appDb.OrganisationMembers
-        .Where(m => m.OrganisationId == orgId)
-        .Select(m => new
+            .Where(m => m.OrganisationId == orgId)
+            .OrderBy(m => m.JoinedAt)
+            .ToListAsync();
+
+        // Cross-DB enrichment: pull names + phones from AuthDb in one round trip.
+        var userIds = members.Select(m => m.UserId).Distinct().ToList();
+        var users = await authDb.Users
+            .Where(u => userIds.Contains(u.Id))
+            .ToDictionaryAsync(u => u.Id, u => new { u.Name, u.Phone });
+
+        var result = members.Select(m => new
         {
             member_id = m.Id,
             user_id = m.UserId,
+            name = users.TryGetValue(m.UserId, out var u) ? u.Name : null,
+            phone = users.TryGetValue(m.UserId, out var u2) ? u2.Phone : null,
             role = m.Role,
             sub_role = m.SubRole,
-            joinedAt = m.JoinedAt,
-        })
-        .ToListAsync();
+            is_active = m.IsActive,
+            joined_at = m.JoinedAt,
+        });
 
-        return Ok(members);
+        return Ok(result);
     }
 
 }
