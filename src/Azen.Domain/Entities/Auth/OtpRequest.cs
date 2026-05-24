@@ -8,10 +8,8 @@ public class OtpRequest
     public DateTime ExpiresAt { get; set; }
     public bool IsUsed { get; set; } = false;
     public int AttemptCount { get; set; }
-
-    // Auth Code Issued After Successful OTP verification
-    public string AuthCodeHash { get; set; } = string.Empty;
-    public DateTime AuthCodeExpiresAt { get; set; }
+    public string? AuthCodeHash { get; set; }
+    public DateTime? AuthCodeExpiresAt { get; set; }
     public bool AuthCodeUsed { get; set; } = false;
     public DateTime CreatedAt { get; set; }
 }

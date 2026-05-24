@@ -66,13 +66,13 @@ public class OtpService : IOtpService
     {
         var otpRequest = await _authDb.OtpRequests
             .Where(o => o.Phone == phone
-            && !o.AuthCodeUsed && o.AuthCodeHash != null && o.AuthCodeExpiresAt > DateTime.UtcNow
+            && !o.AuthCodeUsed && o.AuthCodeHash != null && o.AuthCodeExpiresAt != null && o.AuthCodeExpiresAt > DateTime.UtcNow
             )
             .OrderByDescending(o => o.CreatedAt)
             .FirstOrDefaultAsync();
 
 
-        if (otpRequest == null) return false;
+        if (otpRequest == null || otpRequest.AuthCodeHash == null) return false;
 
         if (!BCrypt.Net.BCrypt.Verify(authCode, otpRequest.AuthCodeHash)) return false;
 
