@@ -56,7 +56,7 @@ GET /api/v1/shipments/{id}/events  →  transporter-only, returns events ordered
 
 | Path | Purpose |
 |---|---|
-| `tests/Azen.IntegrationTests/Azen.IntegrationTests.csproj` | xUnit + `Microsoft.AspNetCore.Mvc.Testing` + `Testcontainers.MsSql` (recommended) or `Microsoft.EntityFrameworkCore.InMemory` (faster but less faithful). |
+| `tests/Azen.IntegrationTests/Azen.IntegrationTests.csproj` | xUnit + `Microsoft.AspNetCore.Mvc.Testing` + `Testcontainers.PostgreSql` (recommended) or `Microsoft.EntityFrameworkCore.InMemory` (faster but less faithful). |
 | `tests/Azen.IntegrationTests/Fixtures/AzenWebAppFactory.cs` | `WebApplicationFactory<Program>` that swaps real DbContexts for test ones, swaps `ISmsService` for a capturing fake, swaps `IStorageService` for an in-memory fake. |
 | `tests/Azen.IntegrationTests/Fixtures/DatabaseResetFixture.cs` | Resets both DBs between tests (truncate or recreate). |
 | `tests/Azen.IntegrationTests/Helpers/AuthHelper.cs` | `Task<string> LoginAsTransporterAsync(...)`, `…AsFleetOwnerAsync`, `…AsDriverAsync`. Calls OTP send → verify → token issue, returns access token. |
@@ -77,7 +77,7 @@ GET /api/v1/shipments/{id}/events  →  transporter-only, returns events ordered
 
 ### Decisions you'll need to make
 
-1. **Testcontainers vs InMemory.** Testcontainers spins a real MSSQL in Docker per run (slow start, faithful). InMemory is fast but doesn't enforce unique constraints or `OUTPUT inserted.last_seq`. Recommend Testcontainers for these three flow tests; switch to InMemory for unit-style policy tests later.
+1. **Testcontainers vs InMemory.** Testcontainers spins a real Postgres in Docker per run (slow start, faithful). InMemory is fast but doesn't enforce unique constraints or relational behavior. Recommend Testcontainers for these three flow tests; switch to InMemory for unit-style policy tests later.
 2. **JWT signing in tests:** Use the same secret as `appsettings.Test.json`. Easier than mocking `IJwtService`.
 
 ---
@@ -121,7 +121,7 @@ GET /api/v1/shipments/{id}/events  →  transporter-only, returns events ordered
 |---|---|
 | `Dockerfile` | Multi-stage: `mcr.microsoft.com/dotnet/sdk:8.0` for build, `mcr.microsoft.com/dotnet/aspnet:8.0` for runtime. Final image runs `Azen.Api.dll`, exposes port 8080. |
 | `.dockerignore` | Exclude `bin/`, `obj/`, `.vs/`, `.idea/`, `*.user`, `docs/`, `tests/`. |
-| `docker-compose.yml` | Two services: `mssql` (`mcr.microsoft.com/mssql/server:2019-latest`, SA password, persisted volume) + `api` (build context `.`, depends_on mssql, wired ConnectionStrings via env vars). |
+| `docker-compose.yml` | Local Postgres, MinIO, and API services wired through environment variables. |
 
 ### Files to UPDATE
 
@@ -135,7 +135,7 @@ GET /api/v1/shipments/{id}/events  →  transporter-only, returns events ordered
 ### Decisions you'll need to make
 
 1. **CORS credentials:** If frontend sends cookies, you need `AllowCredentials()` AND explicit origins (no `*`). JWT in Authorization header doesn't need it. Default to no credentials.
-2. **SQL Server in Docker on Apple Silicon:** The 2019 image is `amd64` only and slow under Rosetta. Use `mcr.microsoft.com/azure-sql-edge` for local dev on M-series Macs. Document both paths in README.
+2. **Postgres in Docker:** Use the native `postgres:16-alpine` image locally so Apple Silicon machines run the database without emulation overhead.
 
 ---
 

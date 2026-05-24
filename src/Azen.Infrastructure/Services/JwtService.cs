@@ -16,11 +16,11 @@ public class JwtService : IJwtService
     {
         _config = config;
     }
-    public string GenerateAccessToken(Guid userId, Guid ordId, Guid memberId, string role, string subRole)
+    public string GenerateAccessToken(Guid userId, Guid orgId, Guid memberId, string role, string subRole)
     {
-        var secret = _config["Jwt:Secret"];
-        var issuer = _config["Jwt:Issuer"];
-        var audience = _config["Jwt:Audience"];
+        var secret = _config["Jwt:Secret"] ?? throw new InvalidOperationException("Jwt:Secret is required");
+        var issuer = _config["Jwt:Issuer"] ?? throw new InvalidOperationException("Jwt:Issuer is required");
+        var audience = _config["Jwt:Audience"] ?? throw new InvalidOperationException("Jwt:Audience is required");
         var expiryMinutes = int.Parse(_config["Jwt:AccessTokenExpiryMinutes"]!);
 
         var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(secret));
@@ -28,8 +28,8 @@ public class JwtService : IJwtService
 
         var claims = new List<Claim>
         {
-            new Claim("sub",userId.ToString()),
-            new Claim("orgId",ordId.ToString()),
+            new Claim("sub", userId.ToString()),
+            new Claim("orgId", orgId.ToString()),
             new Claim("member_id", memberId.ToString()),
             new Claim("user_role",role),
             new Claim("sub_role",subRole)

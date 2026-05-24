@@ -6,7 +6,7 @@ using Microsoft.EntityFrameworkCore.Migrations;
 namespace Azen.Infrastructure.Migrations.AppDb
 {
     /// <inheritdoc />
-    public partial class InitialAppDb : Migration
+    public partial class InitialPostgresAppDb : Migration
     {
         /// <inheritdoc />
         protected override void Up(MigrationBuilder migrationBuilder)
@@ -15,12 +15,12 @@ namespace Azen.Infrastructure.Migrations.AppDb
                 name: "organisations",
                 columns: table => new
                 {
-                    Id = table.Column<Guid>(type: "uniqueidentifier", nullable: false, defaultValueSql: "NEWID()"),
-                    Name = table.Column<string>(type: "nvarchar(200)", maxLength: 200, nullable: false),
-                    Slug = table.Column<string>(type: "nvarchar(60)", maxLength: 60, nullable: false),
-                    Plan = table.Column<string>(type: "nvarchar(20)", maxLength: 20, nullable: false, defaultValue: "mvp"),
-                    IsActive = table.Column<bool>(type: "bit", nullable: false, defaultValue: true),
-                    CreatedAt = table.Column<DateTime>(type: "datetime2", nullable: false, defaultValueSql: "SYSUTCDATETIME()")
+                    Id = table.Column<Guid>(type: "uuid", nullable: false, defaultValueSql: "gen_random_uuid()"),
+                    Name = table.Column<string>(type: "character varying(200)", maxLength: 200, nullable: false),
+                    Slug = table.Column<string>(type: "character varying(60)", maxLength: 60, nullable: false),
+                    Plan = table.Column<string>(type: "character varying(20)", maxLength: 20, nullable: false, defaultValue: "mvp"),
+                    IsActive = table.Column<bool>(type: "boolean", nullable: false, defaultValue: true),
+                    CreatedAt = table.Column<DateTime>(type: "timestamp with time zone", nullable: false, defaultValueSql: "now()")
                 },
                 constraints: table =>
                 {
@@ -31,13 +31,13 @@ namespace Azen.Infrastructure.Migrations.AppDb
                 name: "organisation_members",
                 columns: table => new
                 {
-                    Id = table.Column<Guid>(type: "uniqueidentifier", nullable: false, defaultValueSql: "NEWID()"),
-                    OrganisationId = table.Column<Guid>(type: "uniqueidentifier", nullable: false),
-                    UserId = table.Column<Guid>(type: "uniqueidentifier", nullable: false),
-                    Role = table.Column<string>(type: "nvarchar(20)", maxLength: 20, nullable: false),
-                    SubRole = table.Column<string>(type: "nvarchar(20)", maxLength: 20, nullable: false, defaultValue: "member"),
-                    IsActive = table.Column<bool>(type: "bit", nullable: false, defaultValue: true),
-                    JoinedAt = table.Column<DateTime>(type: "datetime2", nullable: false, defaultValueSql: "SYSUTCDATETIME()")
+                    Id = table.Column<Guid>(type: "uuid", nullable: false, defaultValueSql: "gen_random_uuid()"),
+                    OrganisationId = table.Column<Guid>(type: "uuid", nullable: false),
+                    UserId = table.Column<Guid>(type: "uuid", nullable: false),
+                    Role = table.Column<string>(type: "character varying(20)", maxLength: 20, nullable: false),
+                    SubRole = table.Column<string>(type: "character varying(20)", maxLength: 20, nullable: false, defaultValue: "member"),
+                    IsActive = table.Column<bool>(type: "boolean", nullable: false, defaultValue: true),
+                    JoinedAt = table.Column<DateTime>(type: "timestamp with time zone", nullable: false, defaultValueSql: "now()")
                 },
                 constraints: table =>
                 {
@@ -54,8 +54,8 @@ namespace Azen.Infrastructure.Migrations.AppDb
                 name: "shipment_ref_sequences",
                 columns: table => new
                 {
-                    OrganisationId = table.Column<Guid>(type: "uniqueidentifier", nullable: false),
-                    LastSeq = table.Column<int>(type: "int", nullable: false, defaultValue: 0)
+                    OrganisationId = table.Column<Guid>(type: "uuid", nullable: false),
+                    LastSeq = table.Column<int>(type: "integer", nullable: false, defaultValue: 0)
                 },
                 constraints: table =>
                 {
@@ -72,28 +72,28 @@ namespace Azen.Infrastructure.Migrations.AppDb
                 name: "shipments",
                 columns: table => new
                 {
-                    Id = table.Column<Guid>(type: "uniqueidentifier", nullable: false, defaultValueSql: "NEWID()"),
-                    OrganisationId = table.Column<Guid>(type: "uniqueidentifier", nullable: false),
-                    ReferenceNumber = table.Column<string>(type: "nvarchar(100)", maxLength: 100, nullable: false),
-                    ConsignorName = table.Column<string>(type: "nvarchar(200)", maxLength: 200, nullable: true),
-                    ConsignorPhone = table.Column<string>(type: "nvarchar(15)", maxLength: 15, nullable: true),
-                    ConsigneeName = table.Column<string>(type: "nvarchar(200)", maxLength: 200, nullable: true),
-                    ConsigneePhone = table.Column<string>(type: "nvarchar(15)", maxLength: 15, nullable: true),
-                    GoodsDescription = table.Column<string>(type: "nvarchar(500)", maxLength: 500, nullable: true),
-                    VehicleNumber = table.Column<string>(type: "nvarchar(50)", maxLength: 50, nullable: true),
-                    Status = table.Column<string>(type: "nvarchar(20)", maxLength: 20, nullable: false, defaultValue: "created"),
-                    FleetOwnerMemberId = table.Column<Guid>(type: "uniqueidentifier", nullable: true),
-                    FleetOwnerName = table.Column<string>(type: "nvarchar(200)", maxLength: 200, nullable: true),
-                    FleetOwnerPhone = table.Column<string>(type: "nvarchar(15)", maxLength: 15, nullable: true),
-                    FleetOwnerInSystem = table.Column<bool>(type: "bit", nullable: false, defaultValue: false),
-                    DriverMemberId = table.Column<Guid>(type: "uniqueidentifier", nullable: true),
-                    DriverName = table.Column<string>(type: "nvarchar(200)", maxLength: 200, nullable: true),
-                    DriverPhone = table.Column<string>(type: "nvarchar(15)", maxLength: 15, nullable: true),
-                    DriverInSystem = table.Column<bool>(type: "bit", nullable: false, defaultValue: false),
-                    Notes = table.Column<string>(type: "nvarchar(max)", nullable: true),
-                    CreatedByMemberId = table.Column<Guid>(type: "uniqueidentifier", nullable: false),
-                    CreatedAt = table.Column<DateTime>(type: "datetime2", nullable: false, defaultValueSql: "SYSUTCDATETIME()"),
-                    UpdatedAt = table.Column<DateTime>(type: "datetime2", nullable: false, defaultValueSql: "SYSUTCDATETIME()")
+                    Id = table.Column<Guid>(type: "uuid", nullable: false, defaultValueSql: "gen_random_uuid()"),
+                    OrganisationId = table.Column<Guid>(type: "uuid", nullable: false),
+                    ReferenceNumber = table.Column<string>(type: "character varying(100)", maxLength: 100, nullable: false),
+                    ConsignorName = table.Column<string>(type: "character varying(200)", maxLength: 200, nullable: true),
+                    ConsignorPhone = table.Column<string>(type: "character varying(15)", maxLength: 15, nullable: true),
+                    ConsigneeName = table.Column<string>(type: "character varying(200)", maxLength: 200, nullable: true),
+                    ConsigneePhone = table.Column<string>(type: "character varying(15)", maxLength: 15, nullable: true),
+                    GoodsDescription = table.Column<string>(type: "character varying(500)", maxLength: 500, nullable: true),
+                    VehicleNumber = table.Column<string>(type: "character varying(50)", maxLength: 50, nullable: true),
+                    Status = table.Column<string>(type: "character varying(20)", maxLength: 20, nullable: false, defaultValue: "created"),
+                    FleetOwnerMemberId = table.Column<Guid>(type: "uuid", nullable: true),
+                    FleetOwnerName = table.Column<string>(type: "character varying(200)", maxLength: 200, nullable: true),
+                    FleetOwnerPhone = table.Column<string>(type: "character varying(15)", maxLength: 15, nullable: true),
+                    FleetOwnerInSystem = table.Column<bool>(type: "boolean", nullable: false, defaultValue: false),
+                    DriverMemberId = table.Column<Guid>(type: "uuid", nullable: true),
+                    DriverName = table.Column<string>(type: "character varying(200)", maxLength: 200, nullable: true),
+                    DriverPhone = table.Column<string>(type: "character varying(15)", maxLength: 15, nullable: true),
+                    DriverInSystem = table.Column<bool>(type: "boolean", nullable: false, defaultValue: false),
+                    Notes = table.Column<string>(type: "text", nullable: true),
+                    CreatedByMemberId = table.Column<Guid>(type: "uuid", nullable: false),
+                    CreatedAt = table.Column<DateTime>(type: "timestamp with time zone", nullable: false, defaultValueSql: "now()"),
+                    UpdatedAt = table.Column<DateTime>(type: "timestamp with time zone", nullable: false, defaultValueSql: "now()")
                 },
                 constraints: table =>
                 {
@@ -128,16 +128,16 @@ namespace Azen.Infrastructure.Migrations.AppDb
                 name: "share_links",
                 columns: table => new
                 {
-                    Id = table.Column<Guid>(type: "uniqueidentifier", nullable: false, defaultValueSql: "NEWID()"),
-                    Token = table.Column<string>(type: "nvarchar(12)", maxLength: 12, nullable: false),
-                    ShipmentId = table.Column<Guid>(type: "uniqueidentifier", nullable: false),
-                    CreatedByMemberId = table.Column<Guid>(type: "uniqueidentifier", nullable: false),
-                    ExpiresAt = table.Column<DateTime>(type: "datetime2", nullable: false),
-                    IsRevoked = table.Column<bool>(type: "bit", nullable: false, defaultValue: false),
-                    VisibleDocTypes = table.Column<string>(type: "nvarchar(max)", nullable: false, defaultValue: "[]"),
-                    AccessCount = table.Column<int>(type: "int", nullable: false, defaultValue: 0),
-                    LastAccessAt = table.Column<DateTime>(type: "datetime2", nullable: true),
-                    CreatedAt = table.Column<DateTime>(type: "datetime2", nullable: false, defaultValueSql: "SYSUTCDATETIME()")
+                    Id = table.Column<Guid>(type: "uuid", nullable: false, defaultValueSql: "gen_random_uuid()"),
+                    Token = table.Column<string>(type: "character varying(12)", maxLength: 12, nullable: false),
+                    ShipmentId = table.Column<Guid>(type: "uuid", nullable: false),
+                    CreatedByMemberId = table.Column<Guid>(type: "uuid", nullable: false),
+                    ExpiresAt = table.Column<DateTime>(type: "timestamp with time zone", nullable: false),
+                    IsRevoked = table.Column<bool>(type: "boolean", nullable: false, defaultValue: false),
+                    VisibleDocTypes = table.Column<string>(type: "text", nullable: false, defaultValue: "[]"),
+                    AccessCount = table.Column<int>(type: "integer", nullable: false, defaultValue: 0),
+                    LastAccessAt = table.Column<DateTime>(type: "timestamp with time zone", nullable: true),
+                    CreatedAt = table.Column<DateTime>(type: "timestamp with time zone", nullable: false, defaultValueSql: "now()")
                 },
                 constraints: table =>
                 {
@@ -160,17 +160,17 @@ namespace Azen.Infrastructure.Migrations.AppDb
                 name: "shipment_documents",
                 columns: table => new
                 {
-                    Id = table.Column<Guid>(type: "uniqueidentifier", nullable: false, defaultValueSql: "NEWID()"),
-                    ShipmentId = table.Column<Guid>(type: "uniqueidentifier", nullable: false),
-                    DocType = table.Column<string>(type: "nvarchar(30)", maxLength: 30, nullable: false),
-                    StorageKey = table.Column<string>(type: "nvarchar(500)", maxLength: 500, nullable: false),
-                    OriginalFileName = table.Column<string>(type: "nvarchar(255)", maxLength: 255, nullable: false),
-                    FileSizeBytes = table.Column<int>(type: "int", nullable: false),
-                    MimeType = table.Column<string>(type: "nvarchar(100)", maxLength: 100, nullable: false),
-                    UploadedByMemberId = table.Column<Guid>(type: "uniqueidentifier", nullable: false),
-                    UploaderRole = table.Column<string>(type: "nvarchar(20)", maxLength: 20, nullable: false),
-                    IsDeleted = table.Column<bool>(type: "bit", nullable: false, defaultValue: false),
-                    CreatedAt = table.Column<DateTime>(type: "datetime2", nullable: false, defaultValueSql: "SYSUTCDATETIME()")
+                    Id = table.Column<Guid>(type: "uuid", nullable: false, defaultValueSql: "gen_random_uuid()"),
+                    ShipmentId = table.Column<Guid>(type: "uuid", nullable: false),
+                    DocType = table.Column<string>(type: "character varying(30)", maxLength: 30, nullable: false),
+                    StorageKey = table.Column<string>(type: "character varying(500)", maxLength: 500, nullable: false),
+                    OriginalFileName = table.Column<string>(type: "character varying(255)", maxLength: 255, nullable: false),
+                    FileSizeBytes = table.Column<int>(type: "integer", nullable: false),
+                    MimeType = table.Column<string>(type: "character varying(100)", maxLength: 100, nullable: false),
+                    UploadedByMemberId = table.Column<Guid>(type: "uuid", nullable: false),
+                    UploaderRole = table.Column<string>(type: "character varying(20)", maxLength: 20, nullable: false),
+                    IsDeleted = table.Column<bool>(type: "boolean", nullable: false, defaultValue: false),
+                    CreatedAt = table.Column<DateTime>(type: "timestamp with time zone", nullable: false, defaultValueSql: "now()")
                 },
                 constraints: table =>
                 {
@@ -193,13 +193,13 @@ namespace Azen.Infrastructure.Migrations.AppDb
                 name: "shipment_events",
                 columns: table => new
                 {
-                    Id = table.Column<Guid>(type: "uniqueidentifier", nullable: false, defaultValueSql: "NEWID()"),
-                    ShipmentId = table.Column<Guid>(type: "uniqueidentifier", nullable: false),
-                    EventType = table.Column<string>(type: "nvarchar(50)", maxLength: 50, nullable: false),
-                    ActorId = table.Column<Guid>(type: "uniqueidentifier", nullable: true),
-                    ActorRole = table.Column<string>(type: "nvarchar(20)", maxLength: 20, nullable: false),
-                    Payload = table.Column<string>(type: "nvarchar(max)", nullable: false, defaultValue: "{}"),
-                    CreatedAt = table.Column<DateTime>(type: "datetime2", nullable: false, defaultValueSql: "SYSUTCDATETIME()")
+                    Id = table.Column<Guid>(type: "uuid", nullable: false, defaultValueSql: "gen_random_uuid()"),
+                    ShipmentId = table.Column<Guid>(type: "uuid", nullable: false),
+                    EventType = table.Column<string>(type: "character varying(50)", maxLength: 50, nullable: false),
+                    ActorId = table.Column<Guid>(type: "uuid", nullable: true),
+                    ActorRole = table.Column<string>(type: "character varying(20)", maxLength: 20, nullable: false),
+                    Payload = table.Column<string>(type: "text", nullable: false, defaultValue: "{}"),
+                    CreatedAt = table.Column<DateTime>(type: "timestamp with time zone", nullable: false, defaultValueSql: "now()")
                 },
                 constraints: table =>
                 {

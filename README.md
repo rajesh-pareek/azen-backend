@@ -11,7 +11,7 @@ This repository is the .NET 8 Web API that powers the mobile and web clients.
 ## Tech stack
 
 - **.NET 8** Web API (Clean Architecture: Api / Application / Domain / Infrastructure)
-- **MSSQL Server 2019** — two databases: `AzenAuthDb` (identity) and `AzenAppDb` (business data)
+- **PostgreSQL** — one database shared by `AuthDbContext` and `AppDbContext`
 - **Entity Framework Core** for persistence and migrations
 - **MinIO** (S3-compatible) for document storage in local/dev environments
 - **JWT + phone OTP** authentication
@@ -32,7 +32,7 @@ You can run the project in two ways. Pick one.
 **Option B — Native.** You need:
 
 - .NET 8 SDK
-- SQL Server 2019 (or Azure SQL Edge on Apple Silicon)
+- PostgreSQL 16
 - MinIO running locally (or any S3-compatible storage)
 - `dotnet-ef` global tool: `dotnet tool install --global dotnet-ef`
 
@@ -40,7 +40,7 @@ You can run the project in two ways. Pick one.
 
 ## Quick start — Docker
 
-This brings up the API, SQL Server, and MinIO together as a connected stack.
+This brings up the API, Postgres, and MinIO together as a connected stack.
 
 ```bash
 # 1. Clone
@@ -49,16 +49,16 @@ cd azen-backend
 
 # 2. Create your .env from the template
 cp .env.example .env
-# Edit .env and set SA_PASSWORD and JWT_SECRET to real values.
+# Edit .env and set POSTGRES_PASSWORD and JWT_SECRET to real values.
 
 # 3. Start the stack
 docker compose up
 ```
 
-That's it. After ~30 seconds (SQL Server takes a moment to warm up), the API is reachable at:
+That's it. After the database health check passes, the API is reachable at:
 
 ```
-http://localhost:5000/swagger
+http://localhost:5010/swagger
 ```
 
 Database migrations apply automatically on first startup in development mode.
@@ -74,10 +74,10 @@ docker compose down -v     # also wipes the DB and storage (fresh start)
 
 | Service | Host port | Notes |
 |---|---|---|
-| API | `5000` | Hit `http://localhost:5000/swagger` |
-| SQL Server | `1434` | Avoids the default `1433` so you don't collide with a local SQL install |
-| MinIO S3 API | `9000` | Programmatic uploads |
-| MinIO console | `9001` | Web UI at `http://localhost:9001` to inspect uploaded files |
+| API | `5000` | Hit `http://localhost:5010/swagger` |
+| Postgres | `5432` | Local database used by both EF Core contexts |
+| MinIO S3 API | `9010` | Programmatic uploads |
+| MinIO console | `9011` | Web UI at `http://localhost:9011` to inspect uploaded files |
 
 ---
 
@@ -90,10 +90,10 @@ For devs who prefer to run the app directly on their machine.
 git clone <repo-url>
 cd azen-backend
 
-# 2. Make sure your local SQL Server is running and reachable on
-#    Server=localhost,1433  (see appsettings.Development.json)
+# 2. Make sure your local Postgres is running and reachable on
+#    Host=localhost;Port=5432  (see appsettings.Development.json)
 
-# 3. Make sure your local MinIO is running on http://localhost:9000
+# 3. Make sure your local MinIO is running on http://localhost:9010
 
 # 4. Restore + run
 dotnet restore
@@ -131,11 +131,12 @@ dotnet ef migrations add <Name> \
 
 ## Configuration
 
-All runtime config lives in `appsettings.json` and `appsettings.Development.json`. Environment variables override either at runtime — that's how `docker-compose.yml` injects connection strings without baking them into the image.
+All runtime config lives in `appsettings.json` and `appsettings.Development.json`. Environment variables override either at runtime, so Docker Compose and hosting providers can inject connection strings without baking secrets into the image.
 
 The key sections:
 
 **`ConnectionStrings`** — separate strings for `AuthDb` and `AppDb`.
+For Neon, both can point to the same Postgres database. Use Neon's SSL connection string format for both env vars.
 
 **`Jwt`** — token signing secret, issuer, audience, expiry windows.
 
@@ -240,17 +241,16 @@ docker compose up
 docker compose logs -f api
 ```
 
-**Open a SQL session against the containerised DB:**
+**Open a Postgres session against the containerised DB:**
 
 ```bash
-docker exec -it azen-db /opt/mssql-tools/bin/sqlcmd \
-  -S localhost -U sa -P "<your SA_PASSWORD>"
+docker exec -it azen-db psql -U azen -d azen
 ```
 
 **Open MinIO console:**
 
 ```
-http://localhost:9001
+http://localhost:9011
 ```
 
 Sign in with the `MINIO_ACCESS_KEY` / `MINIO_SECRET_KEY` from your `.env`.

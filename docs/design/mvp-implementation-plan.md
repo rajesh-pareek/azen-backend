@@ -22,7 +22,7 @@
 
 ### R — Project Infrastructure
 - Configure EF Core with two DbContexts: `AuthDbContext` + `AppDbContext`
-- Set up MSSQL connection strings in `appsettings.json`
+- Set up Postgres connection strings in `appsettings.json`
 - Create all entity models in `Azen.Domain` (see `mvp-design.md` §6)
   - AuthDb: `User`, `OtpRequest`, `RefreshToken`
   - AppDb: `Organisation`, `OrganisationMember`, `Shipment`, `ShipmentDocument`, `ShareLink`, `ShipmentEvent`, `ShipmentRefSequence`

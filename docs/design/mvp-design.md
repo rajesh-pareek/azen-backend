@@ -2,7 +2,7 @@
 
 **Version**: 2.0
 **Date**: April 2026
-**Stack**: .NET 8 · MSSQL 2019 · React Native
+**Stack**: .NET 8 · PostgreSQL 16 · React Native
 **Team**: Rajesh, Aditya, Shivesh
 
 ---
@@ -20,7 +20,7 @@ Azen is a mobile-first logistics coordination platform for Indian mid-sized tran
 ## 2. Tech Stack
 
 - **Backend**: .NET 8 Web API (Clean Architecture)
-- **Database**: MSSQL Server 2019 — two databases: `AuthDb` + `AppDb`
+- **Database**: PostgreSQL 16 — one database shared by `AuthDbContext` + `AppDbContext`
 - **ORM**: Entity Framework Core
 - **Auth**: Phone OTP + JWT (access 15min, refresh 30d)
 - **Storage (MVP)**: Local disk via `IStorageService` interface (swappable to Azure Blob)
@@ -172,7 +172,7 @@ Public routes (`/public/*`, `/auth/*`) skip middleware.
 ### 6.1 Topology
 
 ```
-AuthDb (shared, single instance)        AppDb (shared, single instance)
+Auth tables                             App tables
 ├── users                               ├── organisations
 ├── otp_requests                        ├── organisation_members
 └── refresh_tokens                      ├── shipments
@@ -182,37 +182,37 @@ AuthDb (shared, single instance)        AppDb (shared, single instance)
                                         └── shipment_ref_sequences
 ```
 
-Cross-DB reference: `organisation_members.user_id` → `AuthDb.users.id` (enforced at application level, no FK constraint).
+Cross-context reference: `organisation_members.user_id` → `users.id` is enforced at application level, no FK constraint.
 
 ### 6.2 AuthDb Tables
 
 #### users
 ```sql
 CREATE TABLE users (
-    id            UNIQUEIDENTIFIER NOT NULL DEFAULT NEWID() PRIMARY KEY,
-    phone         NVARCHAR(15)     NOT NULL UNIQUE,
-    name          NVARCHAR(200)    NOT NULL DEFAULT '',
-    email         NVARCHAR(255)    NULL,
-    is_active     BIT              NOT NULL DEFAULT 1,
-    created_at    DATETIME2(7)     NOT NULL DEFAULT SYSUTCDATETIME(),
-    updated_at    DATETIME2(7)     NOT NULL DEFAULT SYSUTCDATETIME()
+    id            UUID NOT NULL DEFAULT gen_random_uuid() PRIMARY KEY,
+    phone         VARCHAR(15)     NOT NULL UNIQUE,
+    name          VARCHAR(200)    NOT NULL DEFAULT '',
+    email         VARCHAR(255)    NULL,
+    is_active     BOOLEAN              NOT NULL DEFAULT true,
+    created_at    TIMESTAMPTZ     NOT NULL DEFAULT now(),
+    updated_at    TIMESTAMPTZ     NOT NULL DEFAULT now()
 );
 ```
 
 #### otp_requests
 ```sql
 CREATE TABLE otp_requests (
-    id                    UNIQUEIDENTIFIER NOT NULL DEFAULT NEWID() PRIMARY KEY,
-    phone                 NVARCHAR(15)     NOT NULL,
-    otp_hash              NVARCHAR(255)    NOT NULL,         -- bcrypt hash of 6-digit OTP
-    expires_at            DATETIME2(7)     NOT NULL,         -- created_at + 10 minutes
-    is_used               BIT              NOT NULL DEFAULT 0,
+    id                    UUID NOT NULL DEFAULT gen_random_uuid() PRIMARY KEY,
+    phone                 VARCHAR(15)     NOT NULL,
+    otp_hash              VARCHAR(255)    NOT NULL,         -- bcrypt hash of 6-digit OTP
+    expires_at            TIMESTAMPTZ     NOT NULL,         -- created_at + 10 minutes
+    is_used               BOOLEAN              NOT NULL DEFAULT false,
     attempt_count         INT              NOT NULL DEFAULT 0,
     -- Auth code: issued after successful OTP verification
-    auth_code_hash        NVARCHAR(255)    NULL,
-    auth_code_expires_at  DATETIME2(7)     NULL,             -- verify time + 5 minutes
-    auth_code_used        BIT              NOT NULL DEFAULT 0,
-    created_at            DATETIME2(7)     NOT NULL DEFAULT SYSUTCDATETIME()
+    auth_code_hash        VARCHAR(255)    NULL,
+    auth_code_expires_at  TIMESTAMPTZ     NULL,             -- verify time + 5 minutes
+    auth_code_used        BOOLEAN              NOT NULL DEFAULT false,
+    created_at            TIMESTAMPTZ     NOT NULL DEFAULT now()
 );
 
 CREATE INDEX IX_otp_phone ON otp_requests (phone, is_used, expires_at);
@@ -221,13 +221,13 @@ CREATE INDEX IX_otp_phone ON otp_requests (phone, is_used, expires_at);
 #### refresh_tokens
 ```sql
 CREATE TABLE refresh_tokens (
-    id            UNIQUEIDENTIFIER NOT NULL DEFAULT NEWID() PRIMARY KEY,
-    user_id       UNIQUEIDENTIFIER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    org_id        UNIQUEIDENTIFIER NOT NULL,    -- AppDb.organisations ref (no FK)
-    token_hash    NVARCHAR(255)    NOT NULL,    -- SHA-256 hash
-    expires_at    DATETIME2(7)     NOT NULL,    -- created_at + 30 days
-    revoked_at    DATETIME2(7)     NULL,        -- NULL = active
-    created_at    DATETIME2(7)     NOT NULL DEFAULT SYSUTCDATETIME()
+    id            UUID NOT NULL DEFAULT gen_random_uuid() PRIMARY KEY,
+    user_id       UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    org_id        UUID NOT NULL,    -- AppDb.organisations ref (no FK)
+    token_hash    VARCHAR(255)    NOT NULL,    -- SHA-256 hash
+    expires_at    TIMESTAMPTZ     NOT NULL,    -- created_at + 30 days
+    revoked_at    TIMESTAMPTZ     NULL,        -- NULL = active
+    created_at    TIMESTAMPTZ     NOT NULL DEFAULT now()
 );
 
 CREATE INDEX IX_rt_user ON refresh_tokens (user_id, revoked_at);
@@ -238,28 +238,28 @@ CREATE INDEX IX_rt_user ON refresh_tokens (user_id, revoked_at);
 #### organisations
 ```sql
 CREATE TABLE organisations (
-    id            UNIQUEIDENTIFIER NOT NULL DEFAULT NEWID() PRIMARY KEY,
-    name          NVARCHAR(200)    NOT NULL,
-    slug          NVARCHAR(60)     NOT NULL UNIQUE,    -- e.g. "anil-logistics"
-    plan          NVARCHAR(20)     NOT NULL DEFAULT 'mvp'
+    id            UUID NOT NULL DEFAULT gen_random_uuid() PRIMARY KEY,
+    name          VARCHAR(200)    NOT NULL,
+    slug          VARCHAR(60)     NOT NULL UNIQUE,    -- e.g. "anil-logistics"
+    plan          VARCHAR(20)     NOT NULL DEFAULT 'mvp'
                   CHECK (plan IN ('mvp', 'growth', 'enterprise')),
-    is_active     BIT              NOT NULL DEFAULT 1,
-    created_at    DATETIME2(7)     NOT NULL DEFAULT SYSUTCDATETIME()
+    is_active     BOOLEAN              NOT NULL DEFAULT true,
+    created_at    TIMESTAMPTZ     NOT NULL DEFAULT now()
 );
 ```
 
 #### organisation_members
 ```sql
 CREATE TABLE organisation_members (
-    id                UNIQUEIDENTIFIER NOT NULL DEFAULT NEWID() PRIMARY KEY,
-    organisation_id   UNIQUEIDENTIFIER NOT NULL REFERENCES organisations(id),
-    user_id           UNIQUEIDENTIFIER NOT NULL,    -- AuthDb.users ref (no FK)
-    role              NVARCHAR(20)     NOT NULL
+    id                UUID NOT NULL DEFAULT gen_random_uuid() PRIMARY KEY,
+    organisation_id   UUID NOT NULL REFERENCES organisations(id),
+    user_id           UUID NOT NULL,    -- AuthDb.users ref (no FK)
+    role              VARCHAR(20)     NOT NULL
                       CHECK (role IN ('transporter', 'fleet_owner', 'driver')),
-    sub_role          NVARCHAR(20)     NOT NULL DEFAULT 'member'
+    sub_role          VARCHAR(20)     NOT NULL DEFAULT 'member'
                       CHECK (sub_role IN ('member', 'manager')),
-    is_active         BIT              NOT NULL DEFAULT 1,
-    joined_at         DATETIME2(7)     NOT NULL DEFAULT SYSUTCDATETIME(),
+    is_active         BOOLEAN              NOT NULL DEFAULT true,
+    joined_at         TIMESTAMPTZ     NOT NULL DEFAULT now(),
 
     CONSTRAINT UQ_org_user UNIQUE (organisation_id, user_id)
 );
@@ -273,43 +273,43 @@ CREATE INDEX IX_orgmembers_org  ON organisation_members (organisation_id, role);
 #### shipments
 ```sql
 CREATE TABLE shipments (
-    id                      UNIQUEIDENTIFIER NOT NULL DEFAULT NEWID() PRIMARY KEY,
-    organisation_id         UNIQUEIDENTIFIER NOT NULL REFERENCES organisations(id),
-    reference_number        NVARCHAR(100)    NOT NULL,
+    id                      UUID NOT NULL DEFAULT gen_random_uuid() PRIMARY KEY,
+    organisation_id         UUID NOT NULL REFERENCES organisations(id),
+    reference_number        VARCHAR(100)    NOT NULL,
 
     -- Consignor / Consignee (always external for MVP)
-    consignor_name          NVARCHAR(200)    NULL,
-    consignor_phone         NVARCHAR(15)     NULL,
-    consignee_name          NVARCHAR(200)    NULL,
-    consignee_phone         NVARCHAR(15)     NULL,
+    consignor_name          VARCHAR(200)    NULL,
+    consignor_phone         VARCHAR(15)     NULL,
+    consignee_name          VARCHAR(200)    NULL,
+    consignee_phone         VARCHAR(15)     NULL,
 
     -- Shipment details
-    goods_description       NVARCHAR(500)    NULL,
-    vehicle_number          NVARCHAR(50)     NULL,
+    goods_description       VARCHAR(500)    NULL,
+    vehicle_number          VARCHAR(50)     NULL,
 
     -- Status
-    status                  NVARCHAR(20)     NOT NULL DEFAULT 'created'
+    status                  VARCHAR(20)     NOT NULL DEFAULT 'created'
                             CHECK (status IN ('created','assigned','pod_uploaded','shared')),
 
     -- Fleet Owner (NULL = not assigned; in_system = 0 means external metadata only)
-    fleet_owner_member_id   UNIQUEIDENTIFIER NULL REFERENCES organisation_members(id),
-    fleet_owner_name        NVARCHAR(200)    NULL,
-    fleet_owner_phone       NVARCHAR(15)     NULL,
-    fleet_owner_in_system   BIT              NOT NULL DEFAULT 0,
+    fleet_owner_member_id   UUID NULL REFERENCES organisation_members(id),
+    fleet_owner_name        VARCHAR(200)    NULL,
+    fleet_owner_phone       VARCHAR(15)     NULL,
+    fleet_owner_in_system   BOOLEAN              NOT NULL DEFAULT false,
 
     -- Driver (same pattern)
-    driver_member_id        UNIQUEIDENTIFIER NULL REFERENCES organisation_members(id),
-    driver_name             NVARCHAR(200)    NULL,
-    driver_phone            NVARCHAR(15)     NULL,
-    driver_in_system        BIT              NOT NULL DEFAULT 0,
+    driver_member_id        UUID NULL REFERENCES organisation_members(id),
+    driver_name             VARCHAR(200)    NULL,
+    driver_phone            VARCHAR(15)     NULL,
+    driver_in_system        BOOLEAN              NOT NULL DEFAULT false,
 
     -- Metadata (always editable)
-    notes                   NVARCHAR(MAX)    NULL,
+    notes                   TEXT    NULL,
 
     -- Audit
-    created_by              UNIQUEIDENTIFIER NOT NULL REFERENCES organisation_members(id),
-    created_at              DATETIME2(7)     NOT NULL DEFAULT SYSUTCDATETIME(),
-    updated_at              DATETIME2(7)     NOT NULL DEFAULT SYSUTCDATETIME(),
+    created_by              UUID NOT NULL REFERENCES organisation_members(id),
+    created_at              TIMESTAMPTZ     NOT NULL DEFAULT now(),
+    updated_at              TIMESTAMPTZ     NOT NULL DEFAULT now(),
 
     CONSTRAINT UQ_shipment_ref_per_org UNIQUE (organisation_id, reference_number)
 );
@@ -322,20 +322,20 @@ CREATE INDEX IX_shipments_driver ON shipments (driver_member_id);
 #### shipment_documents
 ```sql
 CREATE TABLE shipment_documents (
-    id                  UNIQUEIDENTIFIER NOT NULL DEFAULT NEWID() PRIMARY KEY,
-    shipment_id         UNIQUEIDENTIFIER NOT NULL REFERENCES shipments(id) ON DELETE CASCADE,
-    doc_type            NVARCHAR(30)     NOT NULL
+    id                  UUID NOT NULL DEFAULT gen_random_uuid() PRIMARY KEY,
+    shipment_id         UUID NOT NULL REFERENCES shipments(id) ON DELETE CASCADE,
+    doc_type            VARCHAR(30)     NOT NULL
                         CHECK (doc_type IN ('pod','invoice','lr','weighbridge','eway_bill',
                                             'consignment_note','custom')),
-    storage_key         NVARCHAR(500)    NOT NULL,    -- local path or blob key
-    original_filename   NVARCHAR(255)    NOT NULL,
+    storage_key         VARCHAR(500)    NOT NULL,    -- local path or blob key
+    original_filename   VARCHAR(255)    NOT NULL,
     file_size_bytes     INT              NOT NULL,
-    mime_type           NVARCHAR(100)    NOT NULL
+    mime_type           VARCHAR(100)    NOT NULL
                         CHECK (mime_type IN ('image/jpeg','image/png','image/webp','application/pdf')),
-    uploaded_by         UNIQUEIDENTIFIER NOT NULL REFERENCES organisation_members(id),
-    uploader_role       NVARCHAR(20)     NOT NULL,
-    is_deleted          BIT              NOT NULL DEFAULT 0,
-    created_at          DATETIME2(7)     NOT NULL DEFAULT SYSUTCDATETIME()
+    uploaded_by         UUID NOT NULL REFERENCES organisation_members(id),
+    uploader_role       VARCHAR(20)     NOT NULL,
+    is_deleted          BOOLEAN              NOT NULL DEFAULT false,
+    created_at          TIMESTAMPTZ     NOT NULL DEFAULT now()
 );
 
 CREATE INDEX IX_docs_shipment ON shipment_documents (shipment_id, is_deleted);
@@ -344,16 +344,16 @@ CREATE INDEX IX_docs_shipment ON shipment_documents (shipment_id, is_deleted);
 #### share_links
 ```sql
 CREATE TABLE share_links (
-    id                  UNIQUEIDENTIFIER NOT NULL DEFAULT NEWID() PRIMARY KEY,
-    token               NVARCHAR(12)     NOT NULL UNIQUE,    -- base62 slug e.g. "xK9bP2m4Qr"
-    shipment_id         UNIQUEIDENTIFIER NOT NULL REFERENCES shipments(id),
-    created_by          UNIQUEIDENTIFIER NOT NULL REFERENCES organisation_members(id),
-    expires_at          DATETIME2(7)     NOT NULL,            -- default: created_at + 30 days
-    is_revoked          BIT              NOT NULL DEFAULT 0,
-    visible_doc_types   NVARCHAR(MAX)    NOT NULL DEFAULT '[]',  -- JSON array e.g. ["pod","lr"]
+    id                  UUID NOT NULL DEFAULT gen_random_uuid() PRIMARY KEY,
+    token               VARCHAR(12)     NOT NULL UNIQUE,    -- base62 slug e.g. "xK9bP2m4Qr"
+    shipment_id         UUID NOT NULL REFERENCES shipments(id),
+    created_by          UUID NOT NULL REFERENCES organisation_members(id),
+    expires_at          TIMESTAMPTZ     NOT NULL,            -- default: created_at + 30 days
+    is_revoked          BOOLEAN              NOT NULL DEFAULT false,
+    visible_doc_types   TEXT    NOT NULL DEFAULT '[]',  -- JSON array e.g. ["pod","lr"]
     access_count        INT              NOT NULL DEFAULT 0,
-    last_accessed_at    DATETIME2(7)     NULL,
-    created_at          DATETIME2(7)     NOT NULL DEFAULT SYSUTCDATETIME()
+    last_accessed_at    TIMESTAMPTZ     NULL,
+    created_at          TIMESTAMPTZ     NOT NULL DEFAULT now()
 );
 
 CREATE INDEX IX_sharelink_shipment ON share_links (shipment_id, is_revoked);
@@ -362,9 +362,9 @@ CREATE INDEX IX_sharelink_shipment ON share_links (shipment_id, is_revoked);
 #### shipment_events
 ```sql
 CREATE TABLE shipment_events (
-    id              UNIQUEIDENTIFIER NOT NULL DEFAULT NEWID() PRIMARY KEY,
-    shipment_id     UNIQUEIDENTIFIER NOT NULL REFERENCES shipments(id),
-    event_type      NVARCHAR(50)     NOT NULL
+    id              UUID NOT NULL DEFAULT gen_random_uuid() PRIMARY KEY,
+    shipment_id     UUID NOT NULL REFERENCES shipments(id),
+    event_type      VARCHAR(50)     NOT NULL
                     CHECK (event_type IN (
                         'shipment_created','status_changed',
                         'fleet_owner_assigned','fleet_owner_reassigned',
@@ -374,11 +374,11 @@ CREATE TABLE shipment_events (
                         'share_link_generated','share_link_revoked',
                         'metadata_updated'
                     )),
-    actor_id        UNIQUEIDENTIFIER NULL,    -- NULL for system events
-    actor_role      NVARCHAR(20)     NOT NULL
+    actor_id        UUID NULL,    -- NULL for system events
+    actor_role      VARCHAR(20)     NOT NULL
                     CHECK (actor_role IN ('transporter','fleet_owner','driver','system')),
-    payload         NVARCHAR(MAX)    NOT NULL DEFAULT '{}',  -- JSON
-    created_at      DATETIME2(7)     NOT NULL DEFAULT SYSUTCDATETIME()
+    payload         TEXT    NOT NULL DEFAULT '{}',  -- JSON
+    created_at      TIMESTAMPTZ     NOT NULL DEFAULT now()
 );
 
 -- Append-only. Events are NEVER updated or deleted.
@@ -389,12 +389,13 @@ CREATE INDEX IX_events_actor    ON shipment_events (actor_id, created_at);
 #### shipment_ref_sequences
 ```sql
 CREATE TABLE shipment_ref_sequences (
-    organisation_id UNIQUEIDENTIFIER NOT NULL PRIMARY KEY REFERENCES organisations(id),
+    organisation_id UUID NOT NULL PRIMARY KEY REFERENCES organisations(id),
     last_seq        INT              NOT NULL DEFAULT 0
 );
 -- Atomic increment:
 -- UPDATE shipment_ref_sequences SET last_seq = last_seq + 1
--- OUTPUT inserted.last_seq WHERE organisation_id = @orgId
+-- WHERE organisation_id = @orgId
+-- RETURNING last_seq
 -- Format: SHP-{YYYY}-{seq:05d} e.g. SHP-2026-00143
 ```
 
