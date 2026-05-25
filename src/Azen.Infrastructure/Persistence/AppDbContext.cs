@@ -25,13 +25,13 @@ public class AppDbContext : DbContext
         {
             entity.ToTable("organisations");
             entity.HasKey(e => e.Id);
-            entity.Property(e => e.Id).HasDefaultValueSql("NEWID()");
+            entity.Property(e => e.Id).HasDefaultValueSql("gen_random_uuid()");
             entity.Property(e => e.Name).HasMaxLength(200).IsRequired();
             entity.Property(e => e.Slug).HasMaxLength(60).IsRequired();
             entity.HasIndex(entity => entity.Slug).IsUnique(); // slug must be unique across all orgs
             entity.Property(e => e.Plan).HasMaxLength(20).IsRequired().HasDefaultValue("mvp");
             entity.Property(e => e.IsActive).IsRequired().HasDefaultValue(true);
-            entity.Property(e => e.CreatedAt).IsRequired().HasDefaultValueSql("SYSUTCDATETIME()");
+            entity.Property(e => e.CreatedAt).IsRequired().HasDefaultValueSql("now()");
         });
 
         //Organisation Members
@@ -39,14 +39,14 @@ public class AppDbContext : DbContext
         {
             entity.ToTable("organisation_members");
             entity.HasKey(e => e.Id);
-            entity.Property(e => e.Id).HasDefaultValueSql("NEWID()");
+            entity.Property(e => e.Id).HasDefaultValueSql("gen_random_uuid()");
 
             //UserId is cross - db reference - no FK constraint, just a plain column
             entity.Property(e => e.UserId).IsRequired();
             entity.Property(e => e.Role).HasMaxLength(20).IsRequired();
             entity.Property(e => e.SubRole).HasMaxLength(20).IsRequired().HasDefaultValue("member");
             entity.Property(e => e.IsActive).IsRequired().HasDefaultValue(true);
-            entity.Property(e => e.JoinedAt).IsRequired().HasDefaultValueSql("SYSUTCDATETIME()");
+            entity.Property(e => e.JoinedAt).IsRequired().HasDefaultValueSql("now()");
 
             //Fk to organisation - every member belongs to exactly one org
             entity.HasOne(e => e.Organisation)
@@ -72,7 +72,7 @@ public class AppDbContext : DbContext
         {
             entity.ToTable("shipments");
             entity.HasKey(e => e.Id);
-            entity.Property(e => e.Id).HasDefaultValueSql("NEWID()");
+            entity.Property(e => e.Id).HasDefaultValueSql("gen_random_uuid()");
 
             entity.Property(e => e.ReferenceNumber).HasMaxLength(100).IsRequired();
             entity.Property(e => e.ConsignorName).HasMaxLength(200);
@@ -93,8 +93,8 @@ public class AppDbContext : DbContext
             entity.Property(e => e.DriverPhone).HasMaxLength(15);
             entity.Property(e => e.DriverInSystem).IsRequired().HasDefaultValue(false);
 
-            entity.Property(e => e.CreatedAt).IsRequired().HasDefaultValueSql("SYSUTCDATETIME()");
-            entity.Property(e => e.UpdatedAt).IsRequired().HasDefaultValueSql("SYSUTCDATETIME()");
+            entity.Property(e => e.CreatedAt).IsRequired().HasDefaultValueSql("now()");
+            entity.Property(e => e.UpdatedAt).IsRequired().HasDefaultValueSql("now()");
 
             //Fk to Organisation
             entity.HasOne(e => e.Organisation)
@@ -141,7 +141,7 @@ public class AppDbContext : DbContext
         {
             entity.ToTable("shipment_documents");
             entity.HasKey(e => e.Id);
-            entity.Property(e => e.Id).HasDefaultValueSql("NEWID()");
+            entity.Property(e => e.Id).HasDefaultValueSql("gen_random_uuid()");
 
             entity.Property(e => e.DocType).HasMaxLength(30).IsRequired();
             entity.Property(e => e.StorageKey).HasMaxLength(500).IsRequired();
@@ -150,7 +150,7 @@ public class AppDbContext : DbContext
             entity.Property(e => e.MimeType).HasMaxLength(100).IsRequired();
             entity.Property(e => e.UploaderRole).HasMaxLength(20).IsRequired();
             entity.Property(e => e.IsDeleted).IsRequired().HasDefaultValue(false);
-            entity.Property(e => e.CreatedAt).IsRequired().HasDefaultValueSql("SYSUTCDATETIME()");
+            entity.Property(e => e.CreatedAt).IsRequired().HasDefaultValueSql("now()");
 
             //Fk to shipment - casacde delete: if shiopment is delete, it's docs go too
             entity.HasOne(e => e.Shipment)
@@ -176,7 +176,7 @@ public class AppDbContext : DbContext
         {
             entity.ToTable("share_links");
             entity.HasKey(e => e.Id);
-            entity.Property(e => e.Id).HasDefaultValueSql("NEWID()");
+            entity.Property(e => e.Id).HasDefaultValueSql("gen_random_uuid()");
 
             entity.Property(e => e.Token).HasMaxLength(12).IsRequired();
             entity.HasIndex(e => e.Token).IsUnique(); // token must be globally unique for url resolution
@@ -185,7 +185,7 @@ public class AppDbContext : DbContext
             entity.Property(e => e.IsRevoked).IsRequired().HasDefaultValue(false);
             entity.Property(e => e.VisibleDocTypes).IsRequired().HasDefaultValue("[]");
             entity.Property(e => e.AccessCount).IsRequired().HasDefaultValue(0);
-            entity.Property(e => e.CreatedAt).IsRequired().HasDefaultValueSql("SYSUTCDATETIME()");
+            entity.Property(e => e.CreatedAt).IsRequired().HasDefaultValueSql("now()");
 
 
             //Fk to shipment
@@ -210,12 +210,12 @@ public class AppDbContext : DbContext
         {
             entity.ToTable("shipment_events");
             entity.HasKey(e => e.Id);
-            entity.Property(e => e.Id).HasDefaultValueSql("NEWID()");
+            entity.Property(e => e.Id).HasDefaultValueSql("gen_random_uuid()");
 
             entity.Property(e => e.EventType).HasMaxLength(50).IsRequired();
             entity.Property(e => e.ActorRole).HasMaxLength(20).IsRequired();
             entity.Property(e => e.Payload).IsRequired().HasDefaultValue("{}");
-            entity.Property(e => e.CreatedAt).IsRequired().HasDefaultValueSql("SYSUTCDATETIME()");
+            entity.Property(e => e.CreatedAt).IsRequired().HasDefaultValueSql("now()");
 
             //fk to shipment 
             entity.HasOne(e => e.Shipment)
