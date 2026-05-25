@@ -124,7 +124,7 @@ dotnet sln add tests/Azen.IntegrationTests/Azen.IntegrationTests.csproj
 - `xunit`
 - `xunit.runner.visualstudio`
 - `Microsoft.AspNetCore.Mvc.Testing` — boots the API in-memory
-- `Testcontainers.MsSql` — spins up a real SQL Server in Docker per test run
+- `Testcontainers.PostgreSql` — spins up a real Postgres in Docker per test run
 - `FluentAssertions` (optional, but writing readable assertions is worth the dependency)
 
 ### Program.cs shim
@@ -141,7 +141,7 @@ Required so `WebApplicationFactory<Program>` can locate the entry point from the
 
 - `AzenWebAppFactory.cs` — extends `WebApplicationFactory<Program>`. Overrides DI to:
 
-  - Point DbContexts at the Testcontainers-managed MSSQL
+  - Point DbContexts at the Testcontainers-managed Postgres
   - Replace `ISmsService` with `CapturingSmsService` (stores the last OTP per phone)
   - Replace `IStorageService` with `InMemoryStorageService` (dictionary-backed)
 
@@ -152,7 +152,7 @@ Required so `WebApplicationFactory<Program>` can locate the entry point from the
 
 Mixed approach:
 
-- **Testcontainers MSSQL** for the three flow tests and anything touching `ShipmentRefService` (which uses SQL-specific `OUTPUT inserted.last_seq`).
+- **Testcontainers Postgres** for the three flow tests and anything touching database constraints or reference-number generation.
 - **`Microsoft.EntityFrameworkCore.InMemory`** for the unit-style ABAC policy tests where DB-specific behavior doesn't matter. Faster.
 
 ---

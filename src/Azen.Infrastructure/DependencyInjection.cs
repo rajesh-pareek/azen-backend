@@ -14,9 +14,11 @@ public static class DependencyInjection
     public static IServiceCollection AddInfrastructure(this IServiceCollection services, IConfiguration configuration)
     {
         services.AddDbContext<AuthDbContext>(options =>
-            options.UseSqlServer(configuration.GetConnectionString("AuthDb")));
+            options.UseNpgsql(configuration.GetConnectionString("AuthDb"), postgres =>
+                postgres.MigrationsHistoryTable("__auth_migrations_history")));
         services.AddDbContext<AppDbContext>(options =>
-            options.UseSqlServer(configuration.GetConnectionString("AppDb")));
+            options.UseNpgsql(configuration.GetConnectionString("AppDb"), postgres =>
+                postgres.MigrationsHistoryTable("__app_migrations_history")));
 
         var useRealSMSServiceForOTP = bool.TryParse(configuration["FeatureFlags:UseRealSMS"], out var val) && val;
         if (useRealSMSServiceForOTP)
@@ -36,4 +38,3 @@ public static class DependencyInjection
         return services;
     }
 }
-

@@ -22,7 +22,7 @@ public class AuthDbContext : DbContext
         {
             entity.ToTable("users");
             entity.HasKey(e => e.Id);
-            entity.Property(e => e.Id).HasDefaultValueSql("NewID()");
+            entity.Property(e => e.Id).HasDefaultValueSql("gen_random_uuid()");
 
             entity.Property(e => e.Phone).HasMaxLength(15).IsRequired();
             entity.HasIndex(e => e.Phone).IsUnique();
@@ -30,8 +30,8 @@ public class AuthDbContext : DbContext
             entity.Property(e => e.Name).HasMaxLength(200).IsRequired().HasDefaultValue("");
             entity.Property(e => e.Email).HasMaxLength(255);
             entity.Property(e => e.IsActive).IsRequired().HasDefaultValue(true);
-            entity.Property(e => e.CreatedAt).IsRequired().HasDefaultValueSql("SYSUTCDATETIME()");
-            entity.Property(e => e.UpdatedAt).IsRequired().HasDefaultValueSql("SYSUTCDATETIME()");
+            entity.Property(e => e.CreatedAt).IsRequired().HasDefaultValueSql("now()");
+            entity.Property(e => e.UpdatedAt).IsRequired().HasDefaultValueSql("now()");
         });
 
         // -- OTP Requests --
@@ -40,7 +40,7 @@ public class AuthDbContext : DbContext
             entity.ToTable("otp_requests");
 
             entity.HasKey(e => e.Id);
-            entity.Property(e => e.Id).HasDefaultValueSql("NewId()");
+            entity.Property(e => e.Id).HasDefaultValueSql("gen_random_uuid()");
 
             entity.Property(e => e.Phone).HasMaxLength(15).IsRequired();
             entity.Property(e => e.OtpHash).HasMaxLength(255).IsRequired();
@@ -52,7 +52,7 @@ public class AuthDbContext : DbContext
             entity.Property(e => e.AuthCodeExpiresAt);
             entity.Property(e => e.AuthCodeUsed).IsRequired().HasDefaultValue(false);
 
-            entity.Property(e => e.CreatedAt).IsRequired().HasDefaultValueSql("SYSUTCDATETIME()");
+            entity.Property(e => e.CreatedAt).IsRequired().HasDefaultValueSql("now()");
 
             // composite index for fast OTP lookup
             entity.HasIndex(e => new { e.Phone, e.IsUsed, e.ExpiresAt });
@@ -62,11 +62,11 @@ public class AuthDbContext : DbContext
         {
             entity.ToTable("refresh_tokens");
             entity.HasKey(e => e.Id);
-            entity.Property(e => e.Id).HasDefaultValueSql("NEWID()");
+            entity.Property(e => e.Id).HasDefaultValueSql("gen_random_uuid()");
             entity.Property(e => e.TokenHash).IsRequired().HasMaxLength(255);
             entity.Property(e => e.ExpiresAt).IsRequired();
             entity.Property(e => e.RevokedAt);
-            entity.Property(e => e.CreatedAt).IsRequired().HasDefaultValueSql("SYSUTCDATETIME()");
+            entity.Property(e => e.CreatedAt).IsRequired().HasDefaultValueSql("now()");
 
             // FK to User - cascade delete
             entity.HasOne(e => e.User)
