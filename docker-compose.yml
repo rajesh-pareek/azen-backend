@@ -55,6 +55,7 @@ services:
       - Storage__BucketName=azen-documents
       - Storage__UseSSL=false
       - Jwt__Secret=${JWT_SECRET}
+      - FeatureFlags__UseRealSMS=false
     ports:
       - "5010:8080"
 
